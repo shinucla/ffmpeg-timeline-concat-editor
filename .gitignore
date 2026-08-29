@@ -1,0 +1,9 @@
+bin/
+.cache/
+.local/
+output/
+node_modules/
+frontend/dist/
+frontend/node_modules/
+*.mp4
+!sample-videos/
