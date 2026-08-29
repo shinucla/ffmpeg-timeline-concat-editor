@@ -28,8 +28,8 @@ type Clip struct {
 type ProcessRequest struct {
 	Name        string `json:"name"`
 	Clips       []Clip `json:"clips"`
-	CacheFolder string `json:"cacheFolder,omitempty"`
-	ForceRecut  bool   `json:"forceRecut"`
+	CacheFolder    string `json:"cacheFolder,omitempty"`
+	ExportCutParts bool   `json:"exportCutParts"`
 }
 
 type JobStatus string

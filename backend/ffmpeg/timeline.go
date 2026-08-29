@@ -153,6 +153,17 @@ func parseTimelineRepeat(token string) (int, error) {
 	return repeat, nil
 }
 
+func formatTimelineTime(seconds float64) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	total := int(seconds)
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
 func WriteTimelineFile(path, cacheFolder string, entries []TimelineFileEntry) error {
 	var lines []string
 	if cacheFolder != "" {

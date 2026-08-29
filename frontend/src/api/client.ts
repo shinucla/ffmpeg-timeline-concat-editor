@@ -59,16 +59,14 @@ export function frameUrl(videoId: string, t: number): string {
 export async function startProcess(
   name: string,
   segments: TimelineSegment[],
-  cacheFolder: string | null,
-  forceRecut = false,
+  exportCutParts = false,
 ): Promise<{ jobId: string }> {
   const res = await fetch(`${API}/process`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name,
-      forceRecut,
-      cacheFolder: cacheFolder ?? '',
+      exportCutParts,
       clips: segmentsToExportClips(segments),
     }),
   })

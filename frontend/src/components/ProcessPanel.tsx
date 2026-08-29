@@ -5,14 +5,12 @@ import type { Job } from '../types'
 
 export function ProcessPanel() {
   const segments = useProjectStore((s) => s.segments)
-  const cacheFolder = useProjectStore((s) => s.cacheFolder)
   const outputName = useProjectStore((s) => s.outputName)
   const setOutputName = useProjectStore((s) => s.setOutputName)
-  const setCacheFolder = useProjectStore((s) => s.setCacheFolder)
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
-  const [forceRecut, setForceRecut] = useState(false)
+  const [exportCutParts, setExportCutParts] = useState(false)
   const pollRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -30,12 +28,7 @@ export function ProcessPanel() {
     setProcessing(true)
     setJob(null)
     try {
-      const { jobId } = await startProcess(
-        outputName,
-        segments,
-        forceRecut ? null : cacheFolder,
-        forceRecut,
-      )
+      const { jobId } = await startProcess(outputName, segments, exportCutParts)
       pollRef.current = window.setInterval(async () => {
         try {
           const status = await fetchJob(jobId)
@@ -43,9 +36,6 @@ export function ProcessPanel() {
           if (status.status === 'completed' || status.status === 'failed') {
             if (pollRef.current) window.clearInterval(pollRef.current)
             setProcessing(false)
-            if (status.status === 'completed' && status.cacheFolder) {
-              setCacheFolder(status.cacheFolder)
-            }
           }
         } catch {
           if (pollRef.current) window.clearInterval(pollRef.current)
@@ -90,11 +80,11 @@ export function ProcessPanel() {
         <label className="export-bar-option">
           <input
             type="checkbox"
-            checked={forceRecut}
+            checked={exportCutParts}
             disabled={processing}
-            onChange={(e) => setForceRecut(e.target.checked)}
+            onChange={(e) => setExportCutParts(e.target.checked)}
           />
-          <span>Re-cut all segments</span>
+          <span>Force export cut parts</span>
         </label>
 
         <button
