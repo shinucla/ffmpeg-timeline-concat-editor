@@ -25,6 +25,20 @@ function findSegmentAtTime(segs: TimelineSegment[], time: number) {
   return segs.find((seg) => segmentContains(seg, time))
 }
 
+function resolvePlaybackSegment(
+  ordered: TimelineSegment[],
+  time: number,
+  preferredId: string | null,
+) {
+  if (preferredId) {
+    const preferred = ordered.find((seg) => seg.id === preferredId)
+    if (preferred && segmentContains(preferred, time)) {
+      return preferred
+    }
+  }
+  return findSegmentAtTime(ordered, time)
+}
+
 function nextSegmentStartWhenOutside(segs: TimelineSegment[], time: number) {
   const ordered = [...segs].sort((a, b) => a.order - b.order)
   if (ordered.length === 0) return 0
@@ -175,6 +189,7 @@ export function TrimEditor() {
   const segmentRepeatProgressRef = useRef<Map<string, number>>(new Map())
   const programmaticSeekRef = useRef(false)
   const repeatSeekPendingRef = useRef<{ start: number; end: number } | null>(null)
+  const activePlaybackSegmentIdRef = useRef<string | null>(null)
 
   const duration = video?.duration ?? 0
   const fps = video?.fps ?? 30
@@ -218,12 +233,19 @@ export function TrimEditor() {
     zoomTimeline(e.deltaY > 0 ? -1 : 1)
   }
 
-  function seekToTime(time: number, programmatic = false) {
+  function seekToTime(
+    time: number,
+    programmatic = false,
+    playbackSegmentId?: string | null,
+  ) {
     const bounded = duration > 0 ? clamp(time, 0, duration) : Math.max(0, time)
     const quantized = quantizeToFrame(bounded, fps)
     currentTimeRef.current = quantized
     setCurrentTime(quantized)
     prevPlaybackTimeRef.current = quantized
+    if (playbackSegmentId !== undefined) {
+      activePlaybackSegmentIdRef.current = playbackSegmentId
+    }
     if (videoRef.current) {
       // Mark before seeking so the resulting `seeked` event is not re-handled.
       programmaticSeekRef.current = true
@@ -243,11 +265,11 @@ export function TrimEditor() {
       .sort((a, b) => a.order - b.order)
     const active = fileSegments.find((s) => s.id === activeId)
     if (active) {
-      seekToTime(active.start, true)
+      seekToTime(active.start, true, active.id)
     } else if (fileSegments.length > 0) {
-      seekToTime(fileSegments[0].start, true)
+      seekToTime(fileSegments[0].start, true, fileSegments[0].id)
     } else {
-      seekToTime(0, true)
+      seekToTime(0, true, null)
     }
   }, [video?.id])
 
@@ -258,7 +280,8 @@ export function TrimEditor() {
   function handleTableSegmentClick(seg: { id: string; videoId: string; start: number }) {
     selectSegment(seg.id)
     if (seg.videoId === selectedVideoId) {
-      seekToTime(seg.start)
+      resetSegmentRepeatProgress()
+      seekToTime(seg.start, false, seg.id)
     }
   }
 
@@ -419,7 +442,10 @@ export function TrimEditor() {
     e.stopPropagation()
     selectSegment(segmentId)
     const seg = segments.find((s) => s.id === segmentId)
-    if (seg) seekToTime(seg.start)
+    if (seg) {
+      resetSegmentRepeatProgress()
+      seekToTime(seg.start, false, seg.id)
+    }
   }
 
   function beginScrub(e: React.MouseEvent) {
@@ -473,7 +499,7 @@ export function TrimEditor() {
     if (completed < playingSeg.repeat) {
       segmentRepeatProgressRef.current.set(playingSeg.id, completed)
       repeatSeekPendingRef.current = { start: playingSeg.start, end: playingSeg.end }
-      seekToTime(playingSeg.start, true)
+      seekToTime(playingSeg.start, true, playingSeg.id)
       if (wasPlaying) {
         void video?.play()
       }
@@ -488,11 +514,13 @@ export function TrimEditor() {
     const hasNext = index >= 0 && index < ordered.length - 1
 
     if (!hasNext) {
+      activePlaybackSegmentIdRef.current = null
       video?.pause()
       return
     }
 
-    seekToTime(ordered[index + 1].start, true)
+    const nextSeg = ordered[index + 1]
+    seekToTime(nextSeg.start, true, nextSeg.id)
     if (wasPlaying) {
       void video?.play()
     }
@@ -501,11 +529,23 @@ export function TrimEditor() {
   function handleVideoPlay() {
     if (videoSegmentsByOrder.length === 0) return
 
+    const ordered = videoSegmentsByOrder
     const t = currentTimeRef.current
-    if (findSegmentAtTime(videoSegmentsByOrder, t)) return
+    const resolved = resolvePlaybackSegment(
+      ordered,
+      t,
+      activePlaybackSegmentIdRef.current,
+    )
+    if (resolved) {
+      activePlaybackSegmentIdRef.current = resolved.id
+      return
+    }
 
     resetSegmentRepeatProgress()
-    seekToTime(nextSegmentStartWhenOutside(videoSegmentsByOrder, t), true)
+    const nextStart = nextSegmentStartWhenOutside(ordered, t)
+    const nextSeg =
+      ordered.find((seg) => Math.abs(seg.start - nextStart) < 0.001) ?? ordered[0]
+    seekToTime(nextStart, true, nextSeg?.id ?? null)
   }
 
   function handleVideoTimeUpdate(t: number) {
@@ -529,10 +569,13 @@ export function TrimEditor() {
     if (videoSegmentsByOrder.length === 0) return
 
     const endEpsilon = frameStep(fps) / 2
+    const ordered = videoSegmentsByOrder
     const playingSeg =
-      findSegmentAtTime(videoSegmentsByOrder, prev) ??
-      findSegmentAtTime(videoSegmentsByOrder, prev - endEpsilon)
+      resolvePlaybackSegment(ordered, prev, activePlaybackSegmentIdRef.current) ??
+      resolvePlaybackSegment(ordered, prev - endEpsilon, activePlaybackSegmentIdRef.current)
     if (!playingSeg) return
+
+    activePlaybackSegmentIdRef.current = playingSeg.id
 
     const crossedEndNaturally =
       prev < playingSeg.end - endEpsilon &&
@@ -560,6 +603,8 @@ export function TrimEditor() {
       return
     }
     resetSegmentRepeatProgress()
+    const resolved = resolvePlaybackSegment(videoSegmentsByOrder, t, null)
+    activePlaybackSegmentIdRef.current = resolved?.id ?? null
     seekToTime(t)
   }
 
