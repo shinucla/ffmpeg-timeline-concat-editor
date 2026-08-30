@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchJob, formatDurationClock, startProcess } from '../api/client'
 import { useProjectStore } from '../store/projectStore'
+import { effectiveSegmentRepeat, timelineOutputDuration } from '../utils/time'
 import type { Job } from '../types'
 
 export function ProcessPanel() {
@@ -48,8 +49,9 @@ export function ProcessPanel() {
     }
   }
 
-  const totalDuration = segments.reduce(
-    (sum, seg) => sum + Math.max(0, seg.end - seg.start) * seg.repeat,
+  const totalDuration = timelineOutputDuration(segments)
+  const totalPlays = segments.reduce(
+    (sum, seg) => sum + effectiveSegmentRepeat(seg.repeat),
     0,
   )
   const uniqueVideos = new Set(segments.map((seg) => seg.videoId)).size
@@ -60,7 +62,9 @@ export function ProcessPanel() {
         <div className="export-bar-summary">
           <strong className="export-bar-title">Export</strong>
           <span className="badge">
-            {segments.length} segments · {formatDurationClock(totalDuration)}
+            {segments.length} segment{segments.length !== 1 ? 's' : ''}
+            {totalPlays > segments.length ? ` (${totalPlays} plays)` : ''} ·{' '}
+            {formatDurationClock(totalDuration)}
           </span>
           <span className="muted small">
             {uniqueVideos} file{uniqueVideos !== 1 ? 's' : ''}

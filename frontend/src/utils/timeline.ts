@@ -5,6 +5,7 @@ export interface TimelineEntry {
   end: number
   filename: string
   repeat: number
+  rotationSteps: number
 }
 
 export interface ParsedTimeline {
@@ -32,6 +33,63 @@ export function formatTimelineTime(seconds: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
+function normalizeRotationSteps(steps: number): number {
+  const normalized = steps % 4
+  return normalized < 0 ? normalized + 4 : normalized
+}
+
+function parseTimelineRepeat(token: string): number {
+  if (!/^\d+$/.test(token)) {
+    throw new Error('repeat must be a number')
+  }
+  const repeat = Number.parseInt(token, 10)
+  if (repeat < 1) {
+    throw new Error('repeat must be at least 1')
+  }
+  return repeat
+}
+
+function parseTimelineRotationSteps(token: string): number {
+  if (!/^\d+$/.test(token)) {
+    throw new Error('rotation must be a number')
+  }
+  const rotation = Number.parseInt(token, 10)
+  if (rotation < 0 || rotation > 3) {
+    throw new Error('rotation must be between 0 and 3')
+  }
+  return rotation
+}
+
+function parseTimelineTrailingFields(
+  parts: string[],
+  lineNumber: number,
+): { filename: string; repeat: number; rotationSteps: number } {
+  if (parts.length < 4) {
+    throw new Error(`Invalid timeline line ${lineNumber}`)
+  }
+
+  if (parts.length >= 5) {
+    try {
+      const rotationSteps = parseTimelineRotationSteps(parts[parts.length - 1])
+      const repeat = parseTimelineRepeat(parts[parts.length - 2])
+      const filename = parts.slice(2, -2).join(' ').trim()
+      if (!filename) {
+        throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
+      }
+      return { filename, repeat, rotationSteps }
+    } catch {
+      // Fall back to legacy lines without rotation.
+    }
+  }
+
+  const repeat = parseTimelineRepeat(parts[parts.length - 1])
+  const filename = parts.slice(2, -1).join(' ').trim()
+  if (!filename) {
+    throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
+  }
+  return { filename, repeat, rotationSteps: 0 }
+}
+
 function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
   const oldMatch = line.match(OLD_LINE_RE)
   if (oldMatch) {
@@ -45,36 +103,19 @@ function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
       end,
       filename: oldMatch[3].trim(),
       repeat: 1,
+      rotationSteps: 0,
     }
   }
 
   const parts = line.trim().split(/\s+/)
-  if (parts.length < 4) {
-    throw new Error(`Invalid timeline line ${lineNumber}: ${line}`)
-  }
-
   const start = parseTimelineTime(parts[0])
   const end = parseTimelineTime(parts[1])
   if (end <= start) {
     throw new Error(`Invalid segment on line ${lineNumber}: end must be after start`)
   }
 
-  const repeatToken = parts[parts.length - 1]
-  if (!/^\d+$/.test(repeatToken)) {
-    throw new Error(`Invalid timeline line ${lineNumber}: repeat must be a number`)
-  }
-
-  const repeat = Number.parseInt(repeatToken, 10)
-  if (repeat < 1) {
-    throw new Error(`Invalid segment on line ${lineNumber}: repeat must be at least 1`)
-  }
-
-  const filename = parts.slice(2, -1).join(' ').trim()
-  if (!filename) {
-    throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
-  }
-
-  return { start, end, filename, repeat }
+  const { filename, repeat, rotationSteps } = parseTimelineTrailingFields(parts, lineNumber)
+  return { start, end, filename, repeat, rotationSteps }
 }
 
 function parseCacheHeader(line: string): string | null {
@@ -125,6 +166,7 @@ export function groupTimelineEntries(entries: TimelineEntry[]): TimelineClipGrou
       start: entry.start,
       end: entry.end,
       repeat: entry.repeat,
+      rotationSteps: entry.rotationSteps,
     }
     if (last && last.filename === entry.filename) {
       last.segments.push(segment)
@@ -161,6 +203,7 @@ export function serializeTimelineText(
     end: number
     filename: string
     repeat: number
+    rotationSteps: number
     order: number
   }>,
   cacheFolder?: string | null,
@@ -172,7 +215,7 @@ export function serializeTimelineText(
   const sorted = [...segments].sort((a, b) => a.order - b.order)
   for (const seg of sorted) {
     lines.push(
-      `${formatTimelineTime(seg.start)} ${formatTimelineTime(seg.end)} ${seg.filename} ${seg.repeat}`,
+      `${formatTimelineTime(seg.start)} ${formatTimelineTime(seg.end)} ${seg.filename} ${seg.repeat} ${normalizeRotationSteps(seg.rotationSteps)}`,
     )
   }
   return `${lines.join('\n')}\n`

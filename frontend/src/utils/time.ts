@@ -10,3 +10,19 @@ export function quantizeToFrame(seconds: number, fps: number) {
 export function segmentDuration(start: number, end: number) {
   return Math.max(0, end - start)
 }
+
+export function effectiveSegmentRepeat(repeat: number | undefined) {
+  if (!Number.isFinite(repeat) || (repeat ?? 0) < 1) {
+    return 1
+  }
+  return Math.floor(repeat as number)
+}
+
+export function timelineOutputDuration(
+  segments: Array<{ start: number; end: number; repeat?: number }>,
+) {
+  return segments.reduce(
+    (sum, seg) => sum + segmentDuration(seg.start, seg.end) * effectiveSegmentRepeat(seg.repeat),
+    0,
+  )
+}

@@ -7,7 +7,6 @@ import {
   applySegmentDragUpdate,
   computeNewSegmentRange,
   getOtherSegments,
-  getSegmentNeighbors,
 } from '../utils/segmentBounds'
 import { useLibraryStore } from '../store/libraryStore'
 import { usePlayerStore } from '../store/playerStore'
@@ -33,15 +32,6 @@ function nextSegmentStartWhenOutside(segs: TimelineSegment[], time: number) {
   return upcoming?.start ?? ordered[0].start
 }
 
-function nextSegmentStartAfter(segs: TimelineSegment[], current: TimelineSegment) {
-  const ordered = [...segs].sort((a, b) => a.order - b.order)
-  const index = ordered.findIndex((seg) => seg.id === current.id)
-  if (index >= 0 && index < ordered.length - 1) {
-    return ordered[index + 1].start
-  }
-  return ordered[0].start
-}
-
 const TIMELINE_ZOOM_LEVELS = [1, 2, 4, 8, 16, 32, 64] as const
 
 type DragMode = 'resize-start' | 'resize-end' | 'move' | 'playhead' | null
@@ -51,46 +41,41 @@ const SEGMENT_BAR_TOP = 8 + SEGMENT_REPEAT_HEADROOM
 const SEGMENT_BAR_HEIGHT = 40
 const TIMELINE_BASE_HEIGHT = SEGMENT_BAR_TOP + SEGMENT_BAR_HEIGHT + 8
 const LINK_LANE_GAP = 8
-const LINK_INTERVAL_PAD = 0.4
+const LINK_TIME_OVERLAP_EPS = 1e-6
 
 function linkLanesHeight(maxLaneIndex: number) {
   if (maxLaneIndex < 0) return 0
   return 6 + (maxLaneIndex + 1) * LINK_LANE_GAP
 }
 
-function linkHorizontalInterval(
-  from: TimelineSegment,
-  to: TimelineSegment,
-  duration: number,
-) {
-  const x1 = (from.end / duration) * 100
-  const x2 = (to.start / duration) * 100
+function linkTimeInterval(from: TimelineSegment, to: TimelineSegment) {
   return {
-    left: Math.min(x1, x2) - LINK_INTERVAL_PAD,
-    right: Math.max(x1, x2) + LINK_INTERVAL_PAD,
+    left: Math.min(from.end, to.start),
+    right: Math.max(from.end, to.start),
   }
 }
 
-function linkIntervalsOverlap(
+function linkTimeRangesOverlap(
   a: { left: number; right: number },
   b: { left: number; right: number },
 ) {
-  return a.left < b.right && a.right > b.left
+  const overlapStart = Math.max(a.left, b.left)
+  const overlapEnd = Math.min(a.right, b.right)
+  return overlapEnd - overlapStart > LINK_TIME_OVERLAP_EPS
 }
 
 function assignSegmentLinkLanes(
   links: Array<{ from: TimelineSegment; to: TimelineSegment }>,
-  duration: number,
 ) {
   const lanes: Array<Array<{ left: number; right: number }>> = []
   const assignments: number[] = []
 
   for (const link of links) {
-    const interval = linkHorizontalInterval(link.from, link.to, duration)
+    const interval = linkTimeInterval(link.from, link.to)
     let lane = 0
     for (; lane < lanes.length; lane++) {
       const blocked = lanes[lane].some((existing) =>
-        linkIntervalsOverlap(interval, existing),
+        linkTimeRangesOverlap(interval, existing),
       )
       if (!blocked) break
     }
@@ -141,6 +126,7 @@ export function TrimEditor() {
   const adjustSegmentRepeat = useProjectStore((s) => s.adjustSegmentRepeat)
   const reorderSegments = useProjectStore((s) => s.reorderSegments)
   const setSegmentRepeat = useProjectStore((s) => s.setSegmentRepeat)
+  const setSegmentRotationSteps = useProjectStore((s) => s.setSegmentRotationSteps)
   const removeSegment = useProjectStore((s) => s.removeSegment)
   const videoRoot = useLibraryStore((s) => s.folderInput)
   const applyPlayerSettings = usePlayerStore((s) => s.applyTo)
@@ -188,6 +174,7 @@ export function TrimEditor() {
   const currentTimeRef = useRef(0)
   const segmentRepeatProgressRef = useRef<Map<string, number>>(new Map())
   const programmaticSeekRef = useRef(false)
+  const repeatSeekPendingRef = useRef<{ start: number; end: number } | null>(null)
 
   const duration = video?.duration ?? 0
   const fps = video?.fps ?? 30
@@ -305,7 +292,6 @@ export function TrimEditor() {
       const fileSegs = useProjectStore
         .getState()
         .segments.filter((seg) => seg.videoId === video.id)
-      const { prev, next } = getSegmentNeighbors(drag.segmentId, fileSegs)
       const others = getOtherSegments(drag.segmentId, fileSegs)
 
       const nextRange = applySegmentDragUpdate(
@@ -317,8 +303,6 @@ export function TrimEditor() {
         duration,
         minDuration,
         fps,
-        prev,
-        next,
         others,
       )
       if (!nextRange) return
@@ -352,7 +336,7 @@ export function TrimEditor() {
       to: videoSegmentsByOrder[index + 1],
       index,
     }))
-    const lanes = assignSegmentLinkLanes(pairs, duration)
+    const lanes = assignSegmentLinkLanes(pairs)
 
     return pairs.map((link, i) => ({
       ...link,
@@ -381,6 +365,7 @@ export function TrimEditor() {
             onRowClick={handleTableSegmentClick}
             onReorder={reorderSegments}
             onRepeatChange={setSegmentRepeat}
+            onRotationChange={setSegmentRotationSteps}
             emptyMessage="No segments yet."
           />
         )}
@@ -477,18 +462,40 @@ export function TrimEditor() {
 
   function resetSegmentRepeatProgress() {
     segmentRepeatProgressRef.current.clear()
+    repeatSeekPendingRef.current = null
   }
 
   function seekAfterSegmentEnd(playingSeg: TimelineSegment) {
+    const video = videoRef.current
+    const wasPlaying = Boolean(video && !video.paused)
     const completed = (segmentRepeatProgressRef.current.get(playingSeg.id) ?? 0) + 1
+
     if (completed < playingSeg.repeat) {
       segmentRepeatProgressRef.current.set(playingSeg.id, completed)
+      repeatSeekPendingRef.current = { start: playingSeg.start, end: playingSeg.end }
       seekToTime(playingSeg.start, true)
+      if (wasPlaying) {
+        void video?.play()
+      }
       return
     }
 
     segmentRepeatProgressRef.current.delete(playingSeg.id)
-    seekToTime(nextSegmentStartAfter(videoSegmentsByOrder, playingSeg), true)
+    repeatSeekPendingRef.current = null
+
+    const ordered = videoSegmentsByOrder
+    const index = ordered.findIndex((seg) => seg.id === playingSeg.id)
+    const hasNext = index >= 0 && index < ordered.length - 1
+
+    if (!hasNext) {
+      video?.pause()
+      return
+    }
+
+    seekToTime(ordered[index + 1].start, true)
+    if (wasPlaying) {
+      void video?.play()
+    }
   }
 
   function handleVideoPlay() {
@@ -504,6 +511,15 @@ export function TrimEditor() {
   function handleVideoTimeUpdate(t: number) {
     if (scrubbingRef.current) return
 
+    const pendingRepeatSeek = repeatSeekPendingRef.current
+    if (pendingRepeatSeek) {
+      const endEpsilon = frameStep(fps) / 2
+      if (t >= pendingRepeatSeek.end - endEpsilon) {
+        return
+      }
+      repeatSeekPendingRef.current = null
+    }
+
     const prev = prevPlaybackTimeRef.current
     prevPlaybackTimeRef.current = t
     currentTimeRef.current = t
@@ -512,13 +528,16 @@ export function TrimEditor() {
     if (!videoRef.current || videoRef.current.paused) return
     if (videoSegmentsByOrder.length === 0) return
 
+    const endEpsilon = frameStep(fps) / 2
     const playingSeg =
       findSegmentAtTime(videoSegmentsByOrder, prev) ??
-      findSegmentAtTime(videoSegmentsByOrder, prev - 0.05)
+      findSegmentAtTime(videoSegmentsByOrder, prev - endEpsilon)
     if (!playingSeg) return
 
     const crossedEndNaturally =
-      prev < playingSeg.end && t >= playingSeg.end && t - prev < 1
+      prev < playingSeg.end - endEpsilon &&
+      t >= playingSeg.end - endEpsilon &&
+      t - prev < 1
 
     if (crossedEndNaturally) {
       seekAfterSegmentEnd(playingSeg)
@@ -528,6 +547,16 @@ export function TrimEditor() {
   function handleVideoSeeked(t: number) {
     if (programmaticSeekRef.current) {
       programmaticSeekRef.current = false
+      const pendingRepeatSeek = repeatSeekPendingRef.current
+      if (
+        pendingRepeatSeek &&
+        Math.abs(t - pendingRepeatSeek.start) <= frameStep(fps) * 2
+      ) {
+        repeatSeekPendingRef.current = null
+        prevPlaybackTimeRef.current = t
+        currentTimeRef.current = t
+        setCurrentTime(t)
+      }
       return
     }
     resetSegmentRepeatProgress()
@@ -753,6 +782,7 @@ export function TrimEditor() {
         onRowClick={handleTableSegmentClick}
         onReorder={reorderSegments}
         onRepeatChange={setSegmentRepeat}
+        onRotationChange={setSegmentRotationSteps}
       />
     </section>
   )

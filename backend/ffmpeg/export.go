@@ -11,9 +11,10 @@ import (
 
 // ExportSegment is one timeline row (after repeat expansion) read directly from source files.
 type ExportSegment struct {
-	InputPath string
-	Start     float64
-	End       float64
+	InputPath     string
+	Start         float64
+	End           float64
+	RotationSteps int
 }
 
 func formatFFmpegSeekTime(seconds float64) string {
@@ -62,16 +63,18 @@ func buildExportSegments(videoRoot string, req models.ProcessRequest) ([]ExportS
 				continue
 			}
 			manifestEntries = append(manifestEntries, segmentManifestEntry{
-				Start:    seg.Start,
-				End:      seg.End,
-				Filename: filename,
-				Repeat:   seg.Repeat,
+				Start:         seg.Start,
+				End:           seg.End,
+				Filename:      filename,
+				Repeat:        seg.Repeat,
+				RotationSteps: seg.RotationSteps,
 			})
 			for i := 0; i < segmentRepeatCount(seg); i++ {
 				exportSegs = append(exportSegs, ExportSegment{
-					InputPath: inputPath,
-					Start:     seg.Start,
-					End:       seg.End,
+					InputPath:     inputPath,
+					Start:         seg.Start,
+					End:           seg.End,
+					RotationSteps: seg.RotationSteps,
 				})
 			}
 		}
@@ -104,9 +107,10 @@ func buildCutPartSegments(videoRoot string, req models.ProcessRequest) ([]Export
 				continue
 			}
 			parts = append(parts, ExportSegment{
-				InputPath: inputPath,
-				Start:     seg.Start,
-				End:       seg.End,
+				InputPath:     inputPath,
+				Start:         seg.Start,
+				End:           seg.End,
+				RotationSteps: seg.RotationSteps,
 			})
 		}
 	}
@@ -180,30 +184,78 @@ func exportBatchDuration(segments []ExportSegment) float64 {
 	return total
 }
 
-func uniqueInputPaths(segments []ExportSegment) []string {
-	seen := make(map[string]struct{}, len(segments))
-	paths := make([]string, 0, len(segments))
-	for _, seg := range segments {
-		if _, ok := seen[seg.InputPath]; ok {
-			continue
-		}
-		seen[seg.InputPath] = struct{}{}
-		paths = append(paths, seg.InputPath)
+func exportRotationSteps(steps int) int {
+	steps %= 4
+	if steps < 0 {
+		steps += 4
 	}
-	return paths
+	return steps
+}
+
+func rotationVideoFilter(steps int) string {
+	switch exportRotationSteps(steps) {
+	case 1:
+		return "transpose=1,"
+	case 2:
+		return "transpose=1,transpose=1,"
+	case 3:
+		return "transpose=2,"
+	default:
+		return ""
+	}
+}
+
+func segmentEffectiveSize(seg ExportSegment) (int, int, error) {
+	meta, err := Probe(seg.InputPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	if meta.Width <= 0 || meta.Height <= 0 {
+		return 0, 0, fmt.Errorf("segment %s has no video dimensions", filepath.Base(seg.InputPath))
+	}
+	width, height := meta.Width, meta.Height
+	switch exportRotationSteps(seg.RotationSteps) {
+	case 1, 3:
+		width, height = height, width
+	}
+	return width, height, nil
 }
 
 func exportSegmentsSameDimensions(segments []ExportSegment) (bool, error) {
-	paths := uniqueInputPaths(segments)
-	if len(paths) == 0 {
+	if len(segments) == 0 {
 		return false, nil
 	}
-	return segmentsSameDimensions(paths)
+	firstW, firstH, err := segmentEffectiveSize(segments[0])
+	if err != nil {
+		return false, err
+	}
+	for _, seg := range segments[1:] {
+		width, height, err := segmentEffectiveSize(seg)
+		if err != nil {
+			return false, err
+		}
+		if width != firstW || height != firstH {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func exportCanvasSize(segments []ExportSegment) (int, int, error) {
-	paths := uniqueInputPaths(segments)
-	return concatCanvasSize(paths)
+	maxW, maxH := 0, 0
+	for _, seg := range segments {
+		width, height, err := segmentEffectiveSize(seg)
+		if err != nil {
+			return 0, 0, err
+		}
+		if width > maxW {
+			maxW = width
+		}
+		if height > maxH {
+			maxH = height
+		}
+	}
+	return evenDimension(maxW), evenDimension(maxH), nil
 }
 
 func appendSeekInputs(args []string, segments []ExportSegment) []string {
@@ -215,6 +267,53 @@ func appendSeekInputs(args []string, segments []ExportSegment) []string {
 		)
 	}
 	return args
+}
+
+func buildSingleVideoFilter(seg ExportSegment, normalize exportNormalize) string {
+	rotation := rotationVideoFilter(seg.RotationSteps)
+	if normalize.Apply {
+		return rotation + buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH)
+	}
+	if rotation == "" {
+		return "setpts=PTS-STARTPTS"
+	}
+	return rotation + "setpts=PTS-STARTPTS"
+}
+
+func buildExportPTSResetFilter(segments []ExportSegment) string {
+	var filters strings.Builder
+	for i, seg := range segments {
+		rotation := rotationVideoFilter(seg.RotationSteps)
+		filters.WriteString(fmt.Sprintf("[%d:v]%ssetpts=PTS-STARTPTS[v%d];", i, rotation, i))
+		filters.WriteString(fmt.Sprintf("[%d:a]asetpts=PTS-STARTPTS[a%d];", i, i))
+	}
+	var concatInputs strings.Builder
+	for i := 0; i < len(segments); i++ {
+		concatInputs.WriteString(fmt.Sprintf("[v%d][a%d]", i, i))
+	}
+	filters.WriteString(fmt.Sprintf("%sconcat=n=%d:v=1:a=1[outv][outa]", concatInputs.String(), len(segments)))
+	return filters.String()
+}
+
+func buildExportScaleFilter(segments []ExportSegment, canvasW, canvasH int) string {
+	var filters strings.Builder
+	for i, seg := range segments {
+		rotation := rotationVideoFilter(seg.RotationSteps)
+		filters.WriteString(fmt.Sprintf(
+			"[%d:v]%sscale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v%d];",
+			i, rotation, canvasW, canvasH, canvasW, canvasH, i,
+		))
+		filters.WriteString(fmt.Sprintf(
+			"[%d:a]aresample=48000,asetpts=PTS-STARTPTS[a%d];",
+			i, i,
+		))
+	}
+	var concatInputs strings.Builder
+	for i := 0; i < len(segments); i++ {
+		concatInputs.WriteString(fmt.Sprintf("[v%d][a%d]", i, i))
+	}
+	filters.WriteString(fmt.Sprintf("%sconcat=n=%d:v=1:a=1[outv][outa]", concatInputs.String(), len(segments)))
+	return filters.String()
 }
 
 func buildSingleScaleVideoFilter(canvasW, canvasH int) string {
@@ -240,23 +339,19 @@ func runExportBatch(
 	args = appendSeekInputs(args, segments)
 
 	if n == 1 {
+		seg := segments[0]
+		args = append(args, "-vf", buildSingleVideoFilter(seg, normalize))
 		if normalize.Apply {
-			args = append(args,
-				"-vf", buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH),
-				"-af", "aresample=48000,asetpts=PTS-STARTPTS",
-			)
+			args = append(args, "-af", "aresample=48000,asetpts=PTS-STARTPTS")
 		} else {
-			args = append(args,
-				"-vf", "setpts=PTS-STARTPTS",
-				"-af", "asetpts=PTS-STARTPTS",
-			)
+			args = append(args, "-af", "asetpts=PTS-STARTPTS")
 		}
 	} else {
 		var filter string
 		if normalize.Apply {
-			filter = buildScaleFilter(n, normalize.CanvasW, normalize.CanvasH)
+			filter = buildExportScaleFilter(segments, normalize.CanvasW, normalize.CanvasH)
 		} else {
-			filter = buildPTSResetFilter(n)
+			filter = buildExportPTSResetFilter(segments)
 		}
 		args = append(args,
 			"-filter_complex", filter,

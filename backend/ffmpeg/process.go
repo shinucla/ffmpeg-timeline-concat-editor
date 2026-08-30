@@ -24,20 +24,22 @@ type ProcessResult struct {
 }
 
 type segmentManifestEntry struct {
-	Start    float64
-	End      float64
-	Filename string
-	Repeat   int
+	Start         float64
+	End           float64
+	Filename      string
+	Repeat        int
+	RotationSteps int
 }
 
 func writeSegmentManifest(path string, entries []segmentManifestEntry) error {
 	fileEntries := make([]TimelineFileEntry, len(entries))
 	for i, e := range entries {
 		fileEntries[i] = TimelineFileEntry{
-			Start:    e.Start,
-			End:      e.End,
-			Filename: e.Filename,
-			Repeat:   e.Repeat,
+			Start:         e.Start,
+			End:           e.End,
+			Filename:      e.Filename,
+			Repeat:        e.Repeat,
+			RotationSteps: e.RotationSteps,
 		}
 	}
 	return WriteTimelineFile(path, "", fileEntries)

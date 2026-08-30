@@ -263,10 +263,11 @@ func (h *Handler) SaveTimeline(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		CacheFolder string `json:"cacheFolder"`
 		Segments    []struct {
-			Start    float64 `json:"start"`
-			End      float64 `json:"end"`
-			Filename string  `json:"filename"`
-			Repeat   int     `json:"repeat"`
+			Start         float64 `json:"start"`
+			End           float64 `json:"end"`
+			Filename      string  `json:"filename"`
+			Repeat        int     `json:"repeat"`
+			RotationSteps int     `json:"rotationSteps"`
 		} `json:"segments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -299,10 +300,11 @@ func (h *Handler) SaveTimeline(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entries[i] = ffmpeg.TimelineFileEntry{
-			Start:    seg.Start,
-			End:      seg.End,
-			Filename: strings.TrimSpace(seg.Filename),
-			Repeat:   seg.Repeat,
+			Start:         seg.Start,
+			End:           seg.End,
+			Filename:      strings.TrimSpace(seg.Filename),
+			Repeat:        seg.Repeat,
+			RotationSteps: seg.RotationSteps,
 		}
 	}
 

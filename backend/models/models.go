@@ -13,9 +13,10 @@ type VideoSummary struct {
 }
 
 type Segment struct {
-	Start  float64 `json:"start"`
-	End    float64 `json:"end"`
-	Repeat int     `json:"repeat,omitempty"`
+	Start         float64 `json:"start"`
+	End           float64 `json:"end"`
+	Repeat        int     `json:"repeat,omitempty"`
+	RotationSteps int     `json:"rotationSteps,omitempty"`
 }
 
 type Clip struct {

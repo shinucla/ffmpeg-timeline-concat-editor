@@ -12,27 +12,6 @@ export function segmentsSortedByTime(segs: TimelineSegment[]) {
   return [...segs].sort((a, b) => a.start - b.start || a.order - b.order)
 }
 
-export function segmentsOverlap(
-  aStart: number,
-  aEnd: number,
-  bStart: number,
-  bEnd: number,
-) {
-  return aStart < bEnd && bStart < aEnd
-}
-
-export function getSegmentNeighbors(segmentId: string, segs: TimelineSegment[]) {
-  const sorted = segmentsSortedByTime(segs)
-  const index = sorted.findIndex((seg) => seg.id === segmentId)
-  if (index < 0) {
-    return { prev: null as TimelineSegment | null, next: null as TimelineSegment | null }
-  }
-  return {
-    prev: index > 0 ? sorted[index - 1] : null,
-    next: index < sorted.length - 1 ? sorted[index + 1] : null,
-  }
-}
-
 export function getOtherSegments(segmentId: string, segs: TimelineSegment[]) {
   return segs.filter((seg) => seg.id !== segmentId)
 }
@@ -73,11 +52,9 @@ export function snapTimeToNearest(
 
 export type SegmentDragMode = 'resize-start' | 'resize-end' | 'move'
 
-export function clampSegmentNoOverlap(
+export function clampSegmentToBounds(
   start: number,
   end: number,
-  prev: TimelineSegment | null,
-  next: TimelineSegment | null,
   duration: number,
   minDuration: number,
   mode: SegmentDragMode,
@@ -89,40 +66,16 @@ export function clampSegmentNoOverlap(
   if (mode === 'move') {
     s = clamp(s, 0, Math.max(0, duration - len))
     e = s + len
-    if (prev && s < prev.end) {
-      s = prev.end
-      e = s + len
-    }
-    if (next && e > next.start) {
-      e = next.start
-      s = e - len
-    }
-    if (prev && s < prev.end) {
-      s = prev.end
-      e = s + len
-    }
-    s = clamp(s, 0, Math.max(0, duration - len))
-    e = s + len
     return { start: s, end: e }
   }
 
   if (mode === 'resize-start') {
-    const minStart = prev ? prev.end : 0
-    let maxStart = end - minDuration
-    if (next && end > next.start) {
-      maxStart = Math.min(maxStart, next.start - minDuration)
-    }
-    s = clamp(s, minStart, Math.max(minStart, maxStart))
-    return { start: s, end }
+    s = clamp(s, 0, end - minDuration)
+    return { start: s, end: e }
   }
 
-  const minEnd = prev ? Math.max(start + minDuration, prev.end) : start + minDuration
-  const maxEnd = next ? next.start : duration
-  e = clamp(e, minEnd, maxEnd)
-  if (prev && segmentsOverlap(start, e, prev.start, prev.end)) {
-    e = Math.max(start + minDuration, prev.end)
-  }
-  return { start, end: e }
+  e = clamp(e, start + minDuration, duration)
+  return { start: s, end: e }
 }
 
 export function applySegmentDragUpdate(
@@ -134,8 +87,6 @@ export function applySegmentDragUpdate(
   duration: number,
   minDuration: number,
   fps: number,
-  prev: TimelineSegment | null,
-  next: TimelineSegment | null,
   others: TimelineSegment[],
 ) {
   let start = origin.start
@@ -193,15 +144,7 @@ export function applySegmentDragUpdate(
     return null
   }
 
-  const clamped = clampSegmentNoOverlap(
-    start,
-    end,
-    prev,
-    next,
-    duration,
-    minDuration,
-    mode,
-  )
+  const clamped = clampSegmentToBounds(start, end, duration, minDuration, mode)
 
   return {
     start: quantizeToFrame(clamped.start, fps),
@@ -226,19 +169,16 @@ export function computeNewSegmentRange(
     }
   }
   start = quantizeToFrame(clamp(start, 0, duration), fps)
+  if (start >= duration) return null
 
   const next = sorted.find((seg) => seg.start > start + 1e-9) ?? null
   let end = start + Math.min(DEFAULT_NEW_SEGMENT_LEN, duration - start)
-  if (next) {
-    end = Math.min(end, next.start)
+  if (next && end > next.start && next.start - start >= minDuration - 1e-9) {
+    end = next.start
   }
   end = quantizeToFrame(clamp(end, start + minDuration, duration), fps)
 
   if (end - start < minDuration - 1e-9) {
-    return null
-  }
-
-  if (sorted.some((seg) => segmentsOverlap(start, end, seg.start, seg.end))) {
     return null
   }
 

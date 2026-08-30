@@ -10,10 +10,11 @@ import (
 const TimelineCacheHeaderPrefix = "# cache:"
 
 type TimelineFileEntry struct {
-	Start    float64
-	End      float64
-	Filename string
-	Repeat   int
+	Start         float64
+	End           float64
+	Filename      string
+	Repeat        int
+	RotationSteps int
 }
 
 type ParsedTimeline struct {
@@ -84,10 +85,11 @@ func parseTimelineSegmentLine(line string, lineNumber int) (TimelineFileEntry, e
 			return TimelineFileEntry{}, fmt.Errorf("line %d: end must be after start", lineNumber)
 		}
 		return TimelineFileEntry{
-			Start:    start,
-			End:      end,
-			Filename: strings.TrimSpace(oldMatch[3]),
-			Repeat:   1,
+			Start:         start,
+			End:           end,
+			Filename:      strings.TrimSpace(oldMatch[3]),
+			Repeat:        1,
+			RotationSteps: 0,
 		}, nil
 	}
 
@@ -108,23 +110,57 @@ func parseTimelineSegmentLine(line string, lineNumber int) (TimelineFileEntry, e
 		return TimelineFileEntry{}, fmt.Errorf("line %d: end must be after start", lineNumber)
 	}
 
-	repeatToken := parts[len(parts)-1]
-	repeat, err := parseTimelineRepeat(repeatToken)
+	repeat, rotationSteps, filename, err := parseTimelineTrailingFields(parts)
 	if err != nil {
 		return TimelineFileEntry{}, fmt.Errorf("line %d: %w", lineNumber, err)
 	}
 
-	filename := strings.Join(parts[2:len(parts)-1], " ")
-	if filename == "" {
-		return TimelineFileEntry{}, fmt.Errorf("line %d: missing filename", lineNumber)
+	return TimelineFileEntry{
+		Start:         start,
+		End:           end,
+		Filename:      filename,
+		Repeat:        repeat,
+		RotationSteps: rotationSteps,
+	}, nil
+}
+
+func parseTimelineTrailingFields(parts []string) (repeat, rotationSteps int, filename string, err error) {
+	if len(parts) < 4 {
+		return 0, 0, "", fmt.Errorf("invalid timeline line")
 	}
 
-	return TimelineFileEntry{
-		Start:    start,
-		End:      end,
-		Filename: filename,
-		Repeat:   repeat,
-	}, nil
+	if len(parts) >= 5 {
+		rotationToken := parts[len(parts)-1]
+		repeatToken := parts[len(parts)-2]
+		parsedRotation, rotErr := parseTimelineRotationSteps(rotationToken)
+		parsedRepeat, repErr := parseTimelineRepeat(repeatToken)
+		if rotErr == nil && repErr == nil {
+			filename = strings.Join(parts[2:len(parts)-2], " ")
+			if filename == "" {
+				return 0, 0, "", fmt.Errorf("missing filename")
+			}
+			return parsedRepeat, parsedRotation, filename, nil
+		}
+	}
+
+	repeatToken := parts[len(parts)-1]
+	parsedRepeat, err := parseTimelineRepeat(repeatToken)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	filename = strings.Join(parts[2:len(parts)-1], " ")
+	if filename == "" {
+		return 0, 0, "", fmt.Errorf("missing filename")
+	}
+	return parsedRepeat, 0, filename, nil
+}
+
+func parseTimelineRotationSteps(token string) (int, error) {
+	var rotation int
+	if _, err := fmt.Sscanf(token, "%d", &rotation); err != nil || rotation < 0 || rotation > 3 {
+		return 0, fmt.Errorf("rotation must be a number from 0 to 3")
+	}
+	return rotation, nil
 }
 
 func parseTimelineClock(value string) (float64, error) {
@@ -153,6 +189,14 @@ func parseTimelineRepeat(token string) (int, error) {
 	return repeat, nil
 }
 
+func normalizeRotationSteps(steps int) int {
+	steps %= 4
+	if steps < 0 {
+		steps += 4
+	}
+	return steps
+}
+
 func formatTimelineTime(seconds float64) string {
 	if seconds < 0 {
 		seconds = 0
@@ -174,12 +218,14 @@ func WriteTimelineFile(path, cacheFolder string, entries []TimelineFileEntry) er
 		if repeat < 1 {
 			repeat = 1
 		}
+		rotation := normalizeRotationSteps(e.RotationSteps)
 		lines = append(lines, fmt.Sprintf(
-			"%s %s %s %d",
+			"%s %s %s %d %d",
 			formatTimelineTime(e.Start),
 			formatTimelineTime(e.End),
 			e.Filename,
 			repeat,
+			rotation,
 		))
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)

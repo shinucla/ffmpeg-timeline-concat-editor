@@ -25,6 +25,7 @@ interface SegmentsTableProps {
   onRowClick: (segment: TimelineSegment) => void
   onReorder: (activeId: string, overId: string) => void
   onRepeatChange: (segmentId: string, repeat: number) => void
+  onRotationChange: (segmentId: string, rotationSteps: number) => void
   emptyMessage?: string
 }
 
@@ -33,6 +34,7 @@ interface SortableSegmentRowProps {
   selected: boolean
   onRowClick: (segment: TimelineSegment) => void
   onRepeatChange: (segmentId: string, repeat: number) => void
+  onRotationChange: (segmentId: string, rotationSteps: number) => void
 }
 
 function SortableSegmentRow({
@@ -40,6 +42,7 @@ function SortableSegmentRow({
   selected,
   onRowClick,
   onRepeatChange,
+  onRotationChange,
 }: SortableSegmentRowProps) {
   const segment = useProjectStore((state) =>
     state.segments.find((entry) => entry.id === segmentId),
@@ -99,6 +102,24 @@ function SortableSegmentRow({
           }}
         />
       </td>
+      <td className="segments-table-repeat">
+        <input
+          type="number"
+          min={0}
+          max={3}
+          step={1}
+          value={segment.rotationSteps}
+          aria-label="Rotation steps (90 degrees clockwise each)"
+          title="0–3 clockwise quarter turns"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const next = Number.parseInt(e.target.value, 10)
+            if (Number.isNaN(next)) return
+            onRotationChange(segment.id, next)
+          }}
+        />
+      </td>
     </tr>
   )
 }
@@ -109,6 +130,7 @@ export function SegmentsTable({
   onRowClick,
   onReorder,
   onRepeatChange,
+  onRotationChange,
   emptyMessage = 'No segments yet. Select a video and click + Segment.',
 }: SegmentsTableProps) {
   const sensors = useSensors(
@@ -141,13 +163,14 @@ export function SegmentsTable({
             <th>Duration</th>
             <th>File name</th>
             <th>Repeat</th>
+            <th>Rotate</th>
           </tr>
         </thead>
         <SortableContext items={segmentIds} strategy={verticalListSortingStrategy}>
           <tbody>
             {segments.length === 0 ? (
               <tr>
-                <td colSpan={6} className="muted">
+                <td colSpan={7} className="muted">
                   {emptyMessage}
                 </td>
               </tr>
@@ -159,6 +182,7 @@ export function SegmentsTable({
                   selected={seg.id === activeSegmentId}
                   onRowClick={onRowClick}
                   onRepeatChange={onRepeatChange}
+                  onRotationChange={onRotationChange}
                 />
               ))
             )}

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { TimelineSegment, VideoSummary } from '../types'
 import { insertSegmentByLibraryOrder, sortSegmentsByLibraryOrder } from '../utils/segmentOrder'
 import { findVideoByFilename, type TimelineEntry } from '../utils/timeline'
+import { effectiveSegmentRepeat } from '../utils/time'
 import { useLibraryStore } from './libraryStore'
 
 interface ProjectState {
@@ -16,6 +17,7 @@ interface ProjectState {
   updateSegment: (segmentId: string, start: number, end: number) => void
   adjustSegmentRepeat: (segmentId: string, delta: number) => void
   setSegmentRepeat: (segmentId: string, repeat: number) => void
+  setSegmentRotationSteps: (segmentId: string, rotationSteps: number) => void
   reorderSegments: (activeId: string, overId: string) => void
   removeSegment: (segmentId: string) => void
   setOutputName: (name: string) => void
@@ -86,6 +88,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       end,
       order: 0,
       repeat: 1,
+      rotationSteps: 0,
     }
     set((state) => ({
       segments: insertSegmentByLibraryOrder(
@@ -116,7 +119,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set((state) => ({
       segments: state.segments.map((seg) => {
         if (seg.id !== segmentId) return seg
-        return { ...seg, repeat: Math.max(1, seg.repeat + delta) }
+        return { ...seg, repeat: Math.max(1, effectiveSegmentRepeat(seg.repeat) + delta) }
       }),
     })),
 
@@ -126,6 +129,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (seg.id !== segmentId) return seg
         const next = Number.isFinite(repeat) ? Math.max(1, Math.floor(repeat)) : 1
         return { ...seg, repeat: next }
+      }),
+    })),
+
+  setSegmentRotationSteps: (segmentId, rotationSteps) =>
+    set((state) => ({
+      segments: state.segments.map((seg) => {
+        if (seg.id !== segmentId) return seg
+        const parsed = Number.isFinite(rotationSteps) ? Math.floor(rotationSteps) : 0
+        const next = ((parsed % 4) + 4) % 4
+        return { ...seg, rotationSteps: next }
       }),
     })),
 
@@ -180,6 +193,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         end: entry.end,
         order: segments.length,
         repeat: entry.repeat,
+        rotationSteps: entry.rotationSteps,
       })
     }
 
