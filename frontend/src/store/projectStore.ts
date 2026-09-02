@@ -4,6 +4,7 @@ import {
   insertSegmentByLibraryOrder,
   moveSegmentInTimelineOrder,
   reassignSegmentOrder,
+  repositionFileGroup,
   segmentsInTimelineOrder,
 } from '../utils/segmentOrder'
 import { findVideoByFilename, type TimelineEntry } from '../utils/timeline'
@@ -154,8 +155,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   removeSegment: (segmentId) =>
     set((state) => {
+      const removed = state.segments.find((seg) => seg.id === segmentId)
+      if (!removed) return state
+
       const filtered = state.segments.filter((seg) => seg.id !== segmentId)
-      const next = reorder(filtered)
+      const stillHasFile = filtered.some((seg) => seg.videoId === removed.videoId)
+      const next = stillHasFile
+        ? repositionFileGroup(filtered, removed.videoId, useLibraryStore.getState().videos)
+        : reorder(filtered)
+
       let activeSegmentId = state.activeSegmentId
       if (activeSegmentId === segmentId) {
         activeSegmentId = next.find((seg) => seg.videoId === state.selectedVideoId)?.id ?? null
@@ -192,6 +200,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
     }
 
+    // Preserve timeline .txt line order as-is (including scattered same-file rows).
     const ordered = reorder(segments)
 
     set({

@@ -18,31 +18,58 @@ export function reassignSegmentOrder(segments: TimelineSegment[]): TimelineSegme
   return segments.map((segment, order) => ({ ...segment, order }))
 }
 
-/** Group segments by file, preserve within-file timeline order, order groups by library name sort. */
-export function regroupSegmentsByLibraryOrder(
+/**
+ * Collect segments for one file in current timeline table order (top to bottom).
+ * When rows are scattered among other files, this preserves their relative sequence.
+ */
+function segmentsForFileInTimelineOrder(
+  sorted: TimelineSegment[],
+  videoId: string,
+): TimelineSegment[] {
+  return sorted.filter((seg) => seg.videoId === videoId)
+}
+
+function libraryInsertIndex(
+  others: TimelineSegment[],
+  videoId: string,
+  videoRank: Map<string, number>,
+): number {
+  const rank = videoRank.get(videoId) ?? Number.MAX_SAFE_INTEGER
+  for (let i = 0; i < others.length; i++) {
+    const otherRank = videoRank.get(others[i].videoId) ?? Number.MAX_SAFE_INTEGER
+    if (otherRank > rank) {
+      return i
+    }
+  }
+  return others.length
+}
+
+/**
+ * Move one file's rows into a contiguous block at the library-order slot.
+ * Scattered rows for the same file are gathered in their existing table sequence;
+ * optional segment is appended to the bottom of that block. Other files are untouched.
+ */
+export function repositionFileGroup(
   segments: TimelineSegment[],
+  videoId: string,
   videos: VideoSummary[],
+  appendSegment?: TimelineSegment,
 ): TimelineSegment[] {
   const videoRank = videoRankMap(videos)
   const sorted = segmentsInTimelineOrder(segments)
 
-  const groups = new Map<string, TimelineSegment[]>()
-  for (const seg of sorted) {
-    const list = groups.get(seg.videoId) ?? []
-    list.push(seg)
-    groups.set(seg.videoId, list)
+  let fileSegs = segmentsForFileInTimelineOrder(sorted, videoId)
+  if (appendSegment) {
+    fileSegs = [...fileSegs, appendSegment]
   }
+  const others = sorted.filter((seg) => seg.videoId !== videoId)
 
-  const videoIds = [...groups.keys()].sort((a, b) => {
-    const rankA = videoRank.get(a) ?? Number.MAX_SAFE_INTEGER
-    const rankB = videoRank.get(b) ?? Number.MAX_SAFE_INTEGER
-    return rankA - rankB
-  })
-
-  const next: TimelineSegment[] = []
-  for (const videoId of videoIds) {
-    next.push(...(groups.get(videoId) ?? []))
-  }
+  const insertAt = libraryInsertIndex(others, videoId, videoRank)
+  const next = [
+    ...others.slice(0, insertAt),
+    ...fileSegs,
+    ...others.slice(insertAt),
+  ]
   return reassignSegmentOrder(next)
 }
 
@@ -70,7 +97,8 @@ export function insertSegmentForNewFile(
 }
 
 /**
- * Adding to a file that already has segments: regroup that file (and all files) by library order.
+ * Adding to a file that already has segments: reposition that file group to library order,
+ * append the new segment at the bottom of the group, and preserve within-group order.
  * Adding to a new file: insert at library position without regrouping existing mixed files.
  */
 export function insertSegmentByLibraryOrder(
@@ -82,7 +110,7 @@ export function insertSegmentByLibraryOrder(
   const hasExistingForFile = sorted.some((seg) => seg.videoId === newSegment.videoId)
 
   if (hasExistingForFile) {
-    return regroupSegmentsByLibraryOrder([...sorted, newSegment], videos)
+    return repositionFileGroup(sorted, newSegment.videoId, videos, newSegment)
   }
   return insertSegmentForNewFile(sorted, newSegment, videos)
 }
