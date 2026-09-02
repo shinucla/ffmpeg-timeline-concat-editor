@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import type { TimelineSegment, VideoSummary } from '../types'
-import { insertSegmentByLibraryOrder, sortSegmentsByLibraryOrder } from '../utils/segmentOrder'
+import {
+  insertSegmentByLibraryOrder,
+  moveSegmentInTimelineOrder,
+  reassignSegmentOrder,
+  segmentsInTimelineOrder,
+} from '../utils/segmentOrder'
 import { findVideoByFilename, type TimelineEntry } from '../utils/timeline'
 import { effectiveSegmentRepeat } from '../utils/time'
 import { useLibraryStore } from './libraryStore'
@@ -18,6 +23,7 @@ interface ProjectState {
   adjustSegmentRepeat: (segmentId: string, delta: number) => void
   setSegmentRepeat: (segmentId: string, repeat: number) => void
   setSegmentRotationSteps: (segmentId: string, rotationSteps: number) => void
+  setSegmentAlternateRepeatReverse: (segmentId: string, alternateRepeatReverse: boolean) => void
   reorderSegments: (activeId: string, overId: string) => void
   removeSegment: (segmentId: string) => void
   setOutputName: (name: string) => void
@@ -32,7 +38,7 @@ interface ProjectState {
 }
 
 function reorder(segments: TimelineSegment[]): TimelineSegment[] {
-  return segments.map((seg, order) => ({ ...seg, order }))
+  return reassignSegmentOrder(segmentsInTimelineOrder(segments))
 }
 
 function moveSegmentInOrder(
@@ -40,16 +46,7 @@ function moveSegmentInOrder(
   activeId: string,
   overId: string,
 ): TimelineSegment[] {
-  const sorted = [...segments].sort((a, b) => a.order - b.order)
-  const fromIndex = sorted.findIndex((seg) => seg.id === activeId)
-  const toIndex = sorted.findIndex((seg) => seg.id === overId)
-  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
-    return segments
-  }
-  const next = [...sorted]
-  const [moved] = next.splice(fromIndex, 1)
-  next.splice(toIndex, 0, moved)
-  return reorder(next)
+  return moveSegmentInTimelineOrder(segments, activeId, overId)
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -89,6 +86,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       order: 0,
       repeat: 1,
       rotationSteps: 0,
+      alternateRepeatReverse: false,
     }
     set((state) => ({
       segments: insertSegmentByLibraryOrder(
@@ -142,26 +140,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }),
     })),
 
+  setSegmentAlternateRepeatReverse: (segmentId, alternateRepeatReverse) =>
+    set((state) => ({
+      segments: state.segments.map((seg) =>
+        seg.id === segmentId ? { ...seg, alternateRepeatReverse } : seg,
+      ),
+    })),
+
   reorderSegments: (activeId, overId) =>
-    set((state) => {
-      const active = state.segments.find((seg) => seg.id === activeId)
-      const over = state.segments.find((seg) => seg.id === overId)
-      if (!active || !over || active.videoId !== over.videoId) {
-        return state
-      }
-      const moved = moveSegmentInOrder(state.segments, activeId, overId)
-      return {
-        segments: sortSegmentsByLibraryOrder(moved, useLibraryStore.getState().videos),
-      }
-    }),
+    set((state) => ({
+      segments: moveSegmentInOrder(state.segments, activeId, overId),
+    })),
 
   removeSegment: (segmentId) =>
     set((state) => {
       const filtered = state.segments.filter((seg) => seg.id !== segmentId)
-      const next = sortSegmentsByLibraryOrder(
-        filtered,
-        useLibraryStore.getState().videos,
-      )
+      const next = reorder(filtered)
       let activeSegmentId = state.activeSegmentId
       if (activeSegmentId === segmentId) {
         activeSegmentId = next.find((seg) => seg.videoId === state.selectedVideoId)?.id ?? null
@@ -194,6 +188,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         order: segments.length,
         repeat: entry.repeat,
         rotationSteps: entry.rotationSteps,
+        alternateRepeatReverse: entry.alternateRepeatReverse,
       })
     }
 

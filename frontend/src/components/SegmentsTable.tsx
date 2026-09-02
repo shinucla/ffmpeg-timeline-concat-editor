@@ -26,6 +26,7 @@ interface SegmentsTableProps {
   onReorder: (activeId: string, overId: string) => void
   onRepeatChange: (segmentId: string, repeat: number) => void
   onRotationChange: (segmentId: string, rotationSteps: number) => void
+  onAlternateRepeatReverseChange: (segmentId: string, alternateRepeatReverse: boolean) => void
   emptyMessage?: string
 }
 
@@ -35,6 +36,7 @@ interface SortableSegmentRowProps {
   onRowClick: (segment: TimelineSegment) => void
   onRepeatChange: (segmentId: string, repeat: number) => void
   onRotationChange: (segmentId: string, rotationSteps: number) => void
+  onAlternateRepeatReverseChange: (segmentId: string, alternateRepeatReverse: boolean) => void
 }
 
 function SortableSegmentRow({
@@ -43,6 +45,7 @@ function SortableSegmentRow({
   onRowClick,
   onRepeatChange,
   onRotationChange,
+  onAlternateRepeatReverseChange,
 }: SortableSegmentRowProps) {
   const segment = useProjectStore((state) =>
     state.segments.find((entry) => entry.id === segmentId),
@@ -120,6 +123,18 @@ function SortableSegmentRow({
           }}
         />
       </td>
+      <td className="segments-table-repeat">
+        <input
+          type="checkbox"
+          checked={segment.alternateRepeatReverse}
+          aria-label="Alternate reverse on even repeats"
+          title="Alternate reverse on even repeats"
+          disabled={segment.repeat < 2}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => onAlternateRepeatReverseChange(segment.id, e.target.checked)}
+        />
+      </td>
     </tr>
   )
 }
@@ -131,6 +146,7 @@ export function SegmentsTable({
   onReorder,
   onRepeatChange,
   onRotationChange,
+  onAlternateRepeatReverseChange,
   emptyMessage = 'No segments yet. Select a video and click + Segment.',
 }: SegmentsTableProps) {
   const sensors = useSensors(
@@ -164,13 +180,14 @@ export function SegmentsTable({
             <th>File name</th>
             <th>Repeat</th>
             <th>Rotate</th>
+            <th title="Alternate reverse on even repeats">Alt rev</th>
           </tr>
         </thead>
         <SortableContext items={segmentIds} strategy={verticalListSortingStrategy}>
           <tbody>
             {segments.length === 0 ? (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={8} className="muted">
                   {emptyMessage}
                 </td>
               </tr>
@@ -183,6 +200,7 @@ export function SegmentsTable({
                   onRowClick={onRowClick}
                   onRepeatChange={onRepeatChange}
                   onRotationChange={onRotationChange}
+                  onAlternateRepeatReverseChange={onAlternateRepeatReverseChange}
                 />
               ))
             )}

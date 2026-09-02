@@ -18,6 +18,11 @@ export function effectiveSegmentRepeat(repeat: number | undefined) {
   return Math.floor(repeat as number)
 }
 
+export function rotationStepsToDegrees(steps: number) {
+  const normalized = ((Math.floor(steps) % 4) + 4) % 4
+  return normalized * 90
+}
+
 export function timelineOutputDuration(
   segments: Array<{ start: number; end: number; repeat?: number }>,
 ) {

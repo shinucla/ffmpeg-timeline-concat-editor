@@ -10,7 +10,13 @@ function segmentsToExportClips(segments: TimelineSegment[]) {
       id: seg.id,
       videoId: seg.videoId,
       order: i,
-      segments: [{ start: seg.start, end: seg.end, repeat: seg.repeat, rotationSteps: seg.rotationSteps }],
+      segments: [{
+        start: seg.start,
+        end: seg.end,
+        repeat: seg.repeat,
+        rotationSteps: seg.rotationSteps,
+        alternateRepeatReverse: seg.alternateRepeatReverse,
+      }],
     }))
 }
 
@@ -102,6 +108,7 @@ export async function saveTimeline(
           filename: seg.video?.name ?? '',
           repeat: seg.repeat,
           rotationSteps: seg.rotationSteps,
+          alternateRepeatReverse: seg.alternateRepeatReverse,
         })),
     }),
   })

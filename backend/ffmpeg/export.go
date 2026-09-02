@@ -9,12 +9,17 @@ import (
 	"github.com/shin/web-load-time-cut-concat/backend/models"
 )
 
+// exportMetadataBatchSize caps parallel inputs per FFmpeg filter_complex export.
+// Keep this low: each input is decoded concurrently and reverse/rotation spike RAM.
+const exportMetadataBatchSize = 16
+
 // ExportSegment is one timeline row (after repeat expansion) read directly from source files.
 type ExportSegment struct {
 	InputPath     string
 	Start         float64
 	End           float64
 	RotationSteps int
+	Reverse       bool
 }
 
 func formatFFmpegSeekTime(seconds float64) string {
@@ -63,18 +68,21 @@ func buildExportSegments(videoRoot string, req models.ProcessRequest) ([]ExportS
 				continue
 			}
 			manifestEntries = append(manifestEntries, segmentManifestEntry{
-				Start:         seg.Start,
-				End:           seg.End,
-				Filename:      filename,
-				Repeat:        seg.Repeat,
-				RotationSteps: seg.RotationSteps,
+				Start:                  seg.Start,
+				End:                    seg.End,
+				Filename:               filename,
+				Repeat:                 seg.Repeat,
+				RotationSteps:          seg.RotationSteps,
+				AlternateRepeatReverse: seg.AlternateRepeatReverse,
 			})
 			for i := 0; i < segmentRepeatCount(seg); i++ {
+				reverse := seg.AlternateRepeatReverse && (i+1)%2 == 0
 				exportSegs = append(exportSegs, ExportSegment{
 					InputPath:     inputPath,
 					Start:         seg.Start,
 					End:           seg.End,
 					RotationSteps: seg.RotationSteps,
+					Reverse:       reverse,
 				})
 			}
 		}
@@ -205,6 +213,25 @@ func rotationVideoFilter(steps int) string {
 	}
 }
 
+func reverseVideoFilter(reverse bool) string {
+	if reverse {
+		return "reverse,"
+	}
+	return ""
+}
+
+func segmentAudioFilter(seg ExportSegment, normalize bool) string {
+	var parts []string
+	if normalize {
+		parts = append(parts, "aresample=48000")
+	}
+	if seg.Reverse {
+		parts = append(parts, "areverse")
+	}
+	parts = append(parts, "asetpts=PTS-STARTPTS")
+	return strings.Join(parts, ",")
+}
+
 func segmentEffectiveSize(seg ExportSegment) (int, int, error) {
 	meta, err := Probe(seg.InputPath)
 	if err != nil {
@@ -271,21 +298,23 @@ func appendSeekInputs(args []string, segments []ExportSegment) []string {
 
 func buildSingleVideoFilter(seg ExportSegment, normalize exportNormalize) string {
 	rotation := rotationVideoFilter(seg.RotationSteps)
+	reverse := reverseVideoFilter(seg.Reverse)
 	if normalize.Apply {
-		return rotation + buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH)
+		return rotation + reverse + buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH)
 	}
-	if rotation == "" {
+	if rotation == "" && reverse == "" {
 		return "setpts=PTS-STARTPTS"
 	}
-	return rotation + "setpts=PTS-STARTPTS"
+	return rotation + reverse + "setpts=PTS-STARTPTS"
 }
 
 func buildExportPTSResetFilter(segments []ExportSegment) string {
 	var filters strings.Builder
 	for i, seg := range segments {
 		rotation := rotationVideoFilter(seg.RotationSteps)
-		filters.WriteString(fmt.Sprintf("[%d:v]%ssetpts=PTS-STARTPTS[v%d];", i, rotation, i))
-		filters.WriteString(fmt.Sprintf("[%d:a]asetpts=PTS-STARTPTS[a%d];", i, i))
+		reverse := reverseVideoFilter(seg.Reverse)
+		filters.WriteString(fmt.Sprintf("[%d:v]%s%ssetpts=PTS-STARTPTS[v%d];", i, rotation, reverse, i))
+		filters.WriteString(fmt.Sprintf("[%d:a]%s[a%d];", i, segmentAudioFilter(seg, false), i))
 	}
 	var concatInputs strings.Builder
 	for i := 0; i < len(segments); i++ {
@@ -299,14 +328,12 @@ func buildExportScaleFilter(segments []ExportSegment, canvasW, canvasH int) stri
 	var filters strings.Builder
 	for i, seg := range segments {
 		rotation := rotationVideoFilter(seg.RotationSteps)
+		reverse := reverseVideoFilter(seg.Reverse)
 		filters.WriteString(fmt.Sprintf(
-			"[%d:v]%sscale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v%d];",
-			i, rotation, canvasW, canvasH, canvasW, canvasH, i,
+			"[%d:v]%s%sscale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v%d];",
+			i, rotation, reverse, canvasW, canvasH, canvasW, canvasH, i,
 		))
-		filters.WriteString(fmt.Sprintf(
-			"[%d:a]aresample=48000,asetpts=PTS-STARTPTS[a%d];",
-			i, i,
-		))
+		filters.WriteString(fmt.Sprintf("[%d:a]%s[a%d];", i, segmentAudioFilter(seg, true), i))
 	}
 	var concatInputs strings.Builder
 	for i := 0; i < len(segments); i++ {
@@ -341,11 +368,7 @@ func runExportBatch(
 	if n == 1 {
 		seg := segments[0]
 		args = append(args, "-vf", buildSingleVideoFilter(seg, normalize))
-		if normalize.Apply {
-			args = append(args, "-af", "aresample=48000,asetpts=PTS-STARTPTS")
-		} else {
-			args = append(args, "-af", "asetpts=PTS-STARTPTS")
-		}
+		args = append(args, "-af", segmentAudioFilter(seg, normalize.Apply))
 	} else {
 		var filter string
 		if normalize.Apply {
@@ -397,22 +420,42 @@ func resolveExportNormalize(segments []ExportSegment) (exportNormalize, error) {
 	return exportNormalize{Apply: true, CanvasW: canvasW, CanvasH: canvasH}, nil
 }
 
+func splitExportMetadataBatches(segments []ExportSegment) [][]ExportSegment {
+	var batches [][]ExportSegment
+	for i := 0; i < len(segments); {
+		batchSize := exportMetadataBatchSize
+		if segments[i].Reverse {
+			batchSize = 1
+		} else {
+			for j := i + 1; j < i+batchSize && j < len(segments); j++ {
+				if segments[j].Reverse {
+					batchSize = j - i
+					break
+				}
+			}
+		}
+		end := i + batchSize
+		if end > len(segments) {
+			end = len(segments)
+		}
+		batches = append(batches, segments[i:end])
+		i = end
+	}
+	return batches
+}
+
 func exportMetadataBatches(
 	segments []ExportSegment,
 	workDir string,
 	normalize exportNormalize,
 	onProgress ConcatProgressFn,
 ) ([]string, error) {
-	batchCount := (len(segments) + concatBatchSize - 1) / concatBatchSize
+	batches := splitExportMetadataBatches(segments)
+	batchCount := len(batches)
 	var batchPaths []string
 	var temps []string
 
-	for i := 0; i < len(segments); i += concatBatchSize {
-		end := i + concatBatchSize
-		if end > len(segments) {
-			end = len(segments)
-		}
-		batch := segments[i:end]
+	for _, batch := range batches {
 		batchIndex := len(batchPaths) + 1
 		out := filepath.Join(workDir, fmt.Sprintf("batch-%03d.mp4", batchIndex))
 		batchPaths = append(batchPaths, out)
@@ -493,7 +536,8 @@ func ExportTimeline(
 		return runWithProgress(exportBatchDuration(segments), "Exporting single segment from timeline")
 	}
 
-	if len(segments) <= concatBatchSize {
+	batches := splitExportMetadataBatches(segments)
+	if len(batches) == 1 {
 		msg := fmt.Sprintf("Exporting %d segments from timeline (PTS reset)", len(segments))
 		if normalize.Apply {
 			msg = fmt.Sprintf("Exporting %d segments from timeline (PTS reset + resolution normalize)", len(segments))

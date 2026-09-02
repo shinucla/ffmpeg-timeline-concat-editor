@@ -1,8 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { formatDuration, formatSegmentBarDuration, streamUrl } from '../api/client'
 import { SegmentsTable } from './SegmentsTable'
-import { sortSegmentsByLibraryOrder } from '../utils/segmentOrder'
-import { frameStep, quantizeToFrame, segmentDuration } from '../utils/time'
+import { frameStep, quantizeToFrame, rotationStepsToDegrees, segmentDuration } from '../utils/time'
 import {
   applySegmentDragUpdate,
   computeNewSegmentRange,
@@ -141,6 +140,7 @@ export function TrimEditor() {
   const reorderSegments = useProjectStore((s) => s.reorderSegments)
   const setSegmentRepeat = useProjectStore((s) => s.setSegmentRepeat)
   const setSegmentRotationSteps = useProjectStore((s) => s.setSegmentRotationSteps)
+  const setSegmentAlternateRepeatReverse = useProjectStore((s) => s.setSegmentAlternateRepeatReverse)
   const removeSegment = useProjectStore((s) => s.removeSegment)
   const videoRoot = useLibraryStore((s) => s.folderInput)
   const applyPlayerSettings = usePlayerStore((s) => s.applyTo)
@@ -168,8 +168,8 @@ export function TrimEditor() {
   )
 
   const sortedSegments = useMemo(
-    () => sortSegmentsByLibraryOrder(segments, videos),
-    [segments, videos],
+    () => [...segments].sort((a, b) => a.order - b.order),
+    [segments],
   )
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -190,6 +190,19 @@ export function TrimEditor() {
   const programmaticSeekRef = useRef(false)
   const repeatSeekPendingRef = useRef<{ start: number; end: number } | null>(null)
   const activePlaybackSegmentIdRef = useRef<string | null>(null)
+
+  const previewSegment = useMemo(() => {
+    const ordered = videoSegmentsByOrder
+    if (ordered.length === 0) return null
+    const preferredId =
+      activePlaybackSegmentIdRef.current ??
+      (activeSegmentId && ordered.some((seg) => seg.id === activeSegmentId)
+        ? activeSegmentId
+        : null)
+    return resolvePlaybackSegment(ordered, currentTime, preferredId)
+  }, [videoSegmentsByOrder, activeSegmentId, currentTime, segments])
+
+  const previewRotationDeg = rotationStepsToDegrees(previewSegment?.rotationSteps ?? 0)
 
   const duration = video?.duration ?? 0
   const fps = video?.fps ?? 30
@@ -389,6 +402,7 @@ export function TrimEditor() {
             onReorder={reorderSegments}
             onRepeatChange={setSegmentRepeat}
             onRotationChange={setSegmentRotationSteps}
+            onAlternateRepeatReverseChange={setSegmentAlternateRepeatReverse}
             emptyMessage="No segments yet."
           />
         )}
@@ -625,18 +639,21 @@ export function TrimEditor() {
         </div>
       </header>
 
-      <video
-        ref={videoRef}
-        className="preview-video"
-        src={streamUrl(activeVideo.id)}
-        controls
-        onLoadedMetadata={(e) => applyPlayerSettings(e.currentTarget)}
-        onVolumeChange={(e) => syncPlayerSettings(e.currentTarget)}
-        onRateChange={(e) => syncPlayerSettings(e.currentTarget)}
-        onPlay={handleVideoPlay}
-        onTimeUpdate={(e) => handleVideoTimeUpdate(e.currentTarget.currentTime)}
-        onSeeked={(e) => handleVideoSeeked(e.currentTarget.currentTime)}
-      />
+      <div className="preview-video-wrap">
+        <video
+          ref={videoRef}
+          className="preview-video"
+          style={{ transform: `rotate(${previewRotationDeg}deg)` }}
+          src={streamUrl(activeVideo.id)}
+          controls
+          onLoadedMetadata={(e) => applyPlayerSettings(e.currentTarget)}
+          onVolumeChange={(e) => syncPlayerSettings(e.currentTarget)}
+          onRateChange={(e) => syncPlayerSettings(e.currentTarget)}
+          onPlay={handleVideoPlay}
+          onTimeUpdate={(e) => handleVideoTimeUpdate(e.currentTarget.currentTime)}
+          onSeeked={(e) => handleVideoSeeked(e.currentTarget.currentTime)}
+        />
+      </div>
 
       <div
         className="timeline-viewport"
@@ -828,6 +845,7 @@ export function TrimEditor() {
         onReorder={reorderSegments}
         onRepeatChange={setSegmentRepeat}
         onRotationChange={setSegmentRotationSteps}
+        onAlternateRepeatReverseChange={setSegmentAlternateRepeatReverse}
       />
     </section>
   )

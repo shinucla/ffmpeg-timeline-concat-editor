@@ -13,10 +13,11 @@ type VideoSummary struct {
 }
 
 type Segment struct {
-	Start         float64 `json:"start"`
-	End           float64 `json:"end"`
-	Repeat        int     `json:"repeat,omitempty"`
-	RotationSteps int     `json:"rotationSteps,omitempty"`
+	Start                  float64 `json:"start"`
+	End                    float64 `json:"end"`
+	Repeat                 int     `json:"repeat,omitempty"`
+	RotationSteps          int     `json:"rotationSteps,omitempty"`
+	AlternateRepeatReverse bool    `json:"alternateRepeatReverse,omitempty"`
 }
 
 type Clip struct {
@@ -27,8 +28,8 @@ type Clip struct {
 }
 
 type ProcessRequest struct {
-	Name        string `json:"name"`
-	Clips       []Clip `json:"clips"`
+	Name           string `json:"name"`
+	Clips          []Clip `json:"clips"`
 	CacheFolder    string `json:"cacheFolder,omitempty"`
 	ExportCutParts bool   `json:"exportCutParts"`
 }

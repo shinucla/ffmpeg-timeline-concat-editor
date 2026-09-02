@@ -23,6 +23,7 @@ export interface Segment {
   end: number
   repeat?: number
   rotationSteps?: number
+  alternateRepeatReverse?: boolean
 }
 
 export interface TimelineSegment {
@@ -34,6 +35,7 @@ export interface TimelineSegment {
   order: number
   repeat: number
   rotationSteps: number
+  alternateRepeatReverse: boolean
 }
 
 export interface ProjectClip {

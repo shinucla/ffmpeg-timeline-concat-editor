@@ -6,6 +6,7 @@ export interface TimelineEntry {
   filename: string
   repeat: number
   rotationSteps: number
+  alternateRepeatReverse: boolean
 }
 
 export interface ParsedTimeline {
@@ -60,12 +61,41 @@ function parseTimelineRotationSteps(token: string): number {
   return rotation
 }
 
+function parseTimelineAlternateRepeatReverse(token: string): boolean {
+  if (!/^[01]$/.test(token)) {
+    throw new Error('alternate reverse must be 0 or 1')
+  }
+  return token === '1'
+}
+
 function parseTimelineTrailingFields(
   parts: string[],
   lineNumber: number,
-): { filename: string; repeat: number; rotationSteps: number } {
+): {
+  filename: string
+  repeat: number
+  rotationSteps: number
+  alternateRepeatReverse: boolean
+} {
   if (parts.length < 4) {
     throw new Error(`Invalid timeline line ${lineNumber}`)
+  }
+
+  if (parts.length >= 6) {
+    try {
+      const alternateRepeatReverse = parseTimelineAlternateRepeatReverse(
+        parts[parts.length - 1],
+      )
+      const rotationSteps = parseTimelineRotationSteps(parts[parts.length - 2])
+      const repeat = parseTimelineRepeat(parts[parts.length - 3])
+      const filename = parts.slice(2, -3).join(' ').trim()
+      if (!filename) {
+        throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
+      }
+      return { filename, repeat, rotationSteps, alternateRepeatReverse }
+    } catch {
+      // Fall back to legacy lines without alternate reverse.
+    }
   }
 
   if (parts.length >= 5) {
@@ -76,7 +106,7 @@ function parseTimelineTrailingFields(
       if (!filename) {
         throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
       }
-      return { filename, repeat, rotationSteps }
+      return { filename, repeat, rotationSteps, alternateRepeatReverse: false }
     } catch {
       // Fall back to legacy lines without rotation.
     }
@@ -87,7 +117,7 @@ function parseTimelineTrailingFields(
   if (!filename) {
     throw new Error(`Invalid timeline line ${lineNumber}: missing filename`)
   }
-  return { filename, repeat, rotationSteps: 0 }
+  return { filename, repeat, rotationSteps: 0, alternateRepeatReverse: false }
 }
 
 function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
@@ -104,6 +134,7 @@ function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
       filename: oldMatch[3].trim(),
       repeat: 1,
       rotationSteps: 0,
+      alternateRepeatReverse: false,
     }
   }
 
@@ -114,8 +145,9 @@ function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
     throw new Error(`Invalid segment on line ${lineNumber}: end must be after start`)
   }
 
-  const { filename, repeat, rotationSteps } = parseTimelineTrailingFields(parts, lineNumber)
-  return { start, end, filename, repeat, rotationSteps }
+  const { filename, repeat, rotationSteps, alternateRepeatReverse } =
+    parseTimelineTrailingFields(parts, lineNumber)
+  return { start, end, filename, repeat, rotationSteps, alternateRepeatReverse }
 }
 
 function parseCacheHeader(line: string): string | null {
@@ -167,6 +199,7 @@ export function groupTimelineEntries(entries: TimelineEntry[]): TimelineClipGrou
       end: entry.end,
       repeat: entry.repeat,
       rotationSteps: entry.rotationSteps,
+      alternateRepeatReverse: entry.alternateRepeatReverse,
     }
     if (last && last.filename === entry.filename) {
       last.segments.push(segment)
@@ -204,6 +237,7 @@ export function serializeTimelineText(
     filename: string
     repeat: number
     rotationSteps: number
+    alternateRepeatReverse: boolean
     order: number
   }>,
   cacheFolder?: string | null,
@@ -214,8 +248,9 @@ export function serializeTimelineText(
   }
   const sorted = [...segments].sort((a, b) => a.order - b.order)
   for (const seg of sorted) {
+    const alternate = seg.alternateRepeatReverse ? 1 : 0
     lines.push(
-      `${formatTimelineTime(seg.start)} ${formatTimelineTime(seg.end)} ${seg.filename} ${seg.repeat} ${normalizeRotationSteps(seg.rotationSteps)}`,
+      `${formatTimelineTime(seg.start)} ${formatTimelineTime(seg.end)} ${seg.filename} ${seg.repeat} ${normalizeRotationSteps(seg.rotationSteps)} ${alternate}`,
     )
   }
   return `${lines.join('\n')}\n`

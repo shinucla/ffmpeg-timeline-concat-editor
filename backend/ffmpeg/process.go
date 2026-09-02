@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/shin/web-load-time-cut-concat/backend/models"
 )
@@ -24,22 +26,24 @@ type ProcessResult struct {
 }
 
 type segmentManifestEntry struct {
-	Start         float64
-	End           float64
-	Filename      string
-	Repeat        int
-	RotationSteps int
+	Start                  float64
+	End                    float64
+	Filename               string
+	Repeat                 int
+	RotationSteps          int
+	AlternateRepeatReverse bool
 }
 
 func writeSegmentManifest(path string, entries []segmentManifestEntry) error {
 	fileEntries := make([]TimelineFileEntry, len(entries))
 	for i, e := range entries {
 		fileEntries[i] = TimelineFileEntry{
-			Start:         e.Start,
-			End:           e.End,
-			Filename:      e.Filename,
-			Repeat:        e.Repeat,
-			RotationSteps: e.RotationSteps,
+			Start:                  e.Start,
+			End:                    e.End,
+			Filename:               e.Filename,
+			Repeat:                 e.Repeat,
+			RotationSteps:          e.RotationSteps,
+			AlternateRepeatReverse: e.AlternateRepeatReverse,
 		}
 	}
 	return WriteTimelineFile(path, "", fileEntries)
@@ -47,6 +51,36 @@ func writeSegmentManifest(path string, entries []segmentManifestEntry) error {
 
 func runFFmpeg(args ...string) error {
 	return runFFmpegWithTimeProgress(args, 0, nil)
+}
+
+func ffmpegKilledHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+			return "; FFmpeg was killed (usually out of memory — try fewer repeats, turn off alternate reverse, or increase WSL RAM)"
+		}
+	}
+	if strings.Contains(err.Error(), "signal: killed") {
+		return "; FFmpeg was killed (usually out of memory — try fewer repeats, turn off alternate reverse, or increase WSL RAM)"
+	}
+	return ""
+}
+
+func wrapFFmpegError(err error, stderr string) error {
+	if err == nil {
+		return nil
+	}
+	hint := ffmpegKilledHint(err)
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return fmt.Errorf("%w: %s%s", err, msg, hint)
+	}
+	if hint != "" {
+		return fmt.Errorf("%w%s", err, hint)
+	}
+	return err
 }
 
 func parseFFmpegOutTimeSeconds(line string) (float64, bool) {
@@ -99,10 +133,7 @@ func runFFmpegWithTimeProgress(args []string, totalDurationSec float64, onRatio 
 
 	if onRatio == nil {
 		if err := cmd.Run(); err != nil {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
-				return fmt.Errorf("%w: %s", err, msg)
-			}
-			return err
+			return wrapFFmpegError(err, stderr.String())
 		}
 		return nil
 	}
@@ -140,13 +171,7 @@ func runFFmpegWithTimeProgress(args []string, totalDurationSec float64, onRatio 
 
 	err = cmd.Wait()
 	wg.Wait()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
-		}
-		return err
-	}
-	return nil
+	return wrapFFmpegError(err, stderr.String())
 }
 
 func evenDimension(n int) int {
