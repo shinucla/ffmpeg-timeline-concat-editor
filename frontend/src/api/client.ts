@@ -89,6 +89,22 @@ export async function fetchJob(jobId: string): Promise<Job> {
   return res.json()
 }
 
+export async function startYtdlpDownload(
+  url: string,
+  segments: Array<{ start: string; end: string }>,
+): Promise<{ jobId: string }> {
+  const res = await fetch(`${API}/ytdlp/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, segments }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'yt-dlp download failed')
+  }
+  return res.json()
+}
+
 export async function saveTimeline(
   name: string,
   segments: TimelineSegment[],

@@ -383,12 +383,8 @@ func runExportBatch(
 		)
 	}
 
+	args = appendLibx264EncodeArgs(args, maxVideoBitrateFromSegments(segments))
 	args = append(args,
-		"-c:v", "libx264",
-		"-crf", "18",
-		"-preset", "fast",
-		"-c:a", "aac",
-		"-b:a", "192k",
 		"-fps_mode", "passthrough",
 		output,
 	)

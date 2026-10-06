@@ -65,6 +65,7 @@ func main() {
 	r.Get("/api/videos/{id}/stream", h.StreamVideo)
 	r.Get("/api/videos/{id}/frame", h.GetFrame)
 	r.Post("/api/process", h.Process)
+	r.Post("/api/ytdlp/download", h.DownloadYtdlp)
 	r.Post("/api/timeline/save", h.SaveTimeline)
 	r.Get("/api/jobs/{id}", h.GetJob)
 

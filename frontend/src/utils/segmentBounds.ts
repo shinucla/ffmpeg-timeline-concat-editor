@@ -112,17 +112,12 @@ export function applySegmentDragUpdate(
     start = clamp(origin.start + delta, 0, duration - len)
     end = start + len
 
-    const allowStartPlayhead = !(delta > 0 && playhead <= origin.start)
-    const allowEndPlayhead = !(delta < 0 && playhead >= origin.end)
-
-    const startTargets: number[] = [...edgeTargets]
-    if (allowStartPlayhead) startTargets.push(playhead)
+    const startTargets: number[] = [...edgeTargets, playhead]
     for (const seg of others) {
       startTargets.push(seg.start - len)
     }
 
-    const endTargets: number[] = [...edgeTargets]
-    if (allowEndPlayhead) endTargets.push(playhead)
+    const endTargets: number[] = [...edgeTargets, playhead]
     for (const seg of others) {
       endTargets.push(seg.end + len)
     }
@@ -130,13 +125,16 @@ export function applySegmentDragUpdate(
     const snappedStart = snapTimeToNearest(start, startTargets, trackWidth, duration)
     const snappedEnd = snapTimeToNearest(end, endTargets, trackWidth, duration)
 
-    const startMoved = Math.abs(snappedStart - start) <= snapThresholdSec(trackWidth, duration) + 1e-9
-    const endMoved = Math.abs(snappedEnd - end) <= snapThresholdSec(trackWidth, duration) + 1e-9
+    const threshold = snapThresholdSec(trackWidth, duration)
+    const startSnapDist = Math.abs(snappedStart - start)
+    const endSnapDist = Math.abs(snappedEnd - end)
+    const startSnapped = startSnapDist > 1e-9 && startSnapDist <= threshold + 1e-9
+    const endSnapped = endSnapDist > 1e-9 && endSnapDist <= threshold + 1e-9
 
-    if (startMoved && (!endMoved || Math.abs(snappedStart - start) <= Math.abs(snappedEnd - end))) {
+    if (startSnapped && (!endSnapped || startSnapDist <= endSnapDist)) {
       start = snappedStart
       end = start + len
-    } else if (endMoved) {
+    } else if (endSnapped) {
       end = snappedEnd
       start = end - len
     }

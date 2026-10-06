@@ -204,6 +204,77 @@ func (h *Handler) Process(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"jobId": jobID})
 }
 
+func (h *Handler) DownloadYtdlp(w http.ResponseWriter, r *http.Request) {
+	var req models.YtdlpDownloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.URL) == "" {
+		http.Error(w, "url is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Segments) == 0 {
+		http.Error(w, "at least one segment is required", http.StatusBadRequest)
+		return
+	}
+
+	jobID := uuid.New().String()
+	job := &models.Job{
+		ID:       jobID,
+		Status:   models.JobPending,
+		Progress: 0,
+		Message:  "Queued",
+	}
+	h.jobs.Set(job)
+
+	go func() {
+		videoRoot, _, _ := h.cfg.Get()
+		running := *job
+		running.Status = models.JobRunning
+		running.Message = "Downloading"
+		h.jobs.Set(&running)
+
+		segments := make([]ffmpeg.YtdlpSegment, len(req.Segments))
+		for i, seg := range req.Segments {
+			segments[i] = ffmpeg.YtdlpSegment{Start: seg.Start, End: seg.End}
+		}
+
+		result, err := ffmpeg.DownloadYtdlpSections(
+			videoRoot,
+			req.URL,
+			segments,
+			func(p float64, msg string) {
+				j, ok := h.jobs.Get(jobID)
+				if !ok {
+					return
+				}
+				j.Progress = p
+				j.Message = msg
+				h.jobs.Set(j)
+			},
+		)
+
+		j, ok := h.jobs.Get(jobID)
+		if !ok {
+			return
+		}
+		if err != nil {
+			j.Status = models.JobFailed
+			j.Error = err.Error()
+			j.Message = "Failed"
+		} else {
+			j.Status = models.JobCompleted
+			j.Progress = 1
+			j.Output = strings.Join(result.Outputs, "; ")
+			j.Message = "Completed"
+		}
+		h.jobs.Set(j)
+	}()
+
+	writeJSON(w, map[string]string{"jobId": jobID})
+}
+
 func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	job, ok := h.jobs.Get(id)

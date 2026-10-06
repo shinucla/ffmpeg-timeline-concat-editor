@@ -34,6 +34,16 @@ type ProcessRequest struct {
 	ExportCutParts bool   `json:"exportCutParts"`
 }
 
+type YtdlpSegment struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+type YtdlpDownloadRequest struct {
+	URL      string         `json:"url"`
+	Segments []YtdlpSegment `json:"segments"`
+}
+
 type JobStatus string
 
 const (

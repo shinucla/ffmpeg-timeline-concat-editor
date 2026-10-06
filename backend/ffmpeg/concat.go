@@ -117,13 +117,9 @@ func concatBatchWithFilter(paths []string, output, filter string, durationSec fl
 		"-filter_complex", filter,
 		"-map", "[outv]",
 		"-map", "[outa]",
-		"-c:v", "libx264",
-		"-crf", "18",
-		"-preset", "fast",
-		"-c:a", "aac",
-		"-b:a", "192k",
-		output,
 	)
+	args = appendLibx264EncodeArgs(args, maxVideoBitrateFromPaths(paths))
+	args = append(args, output)
 
 	if onBatchRatio == nil {
 		return runFFmpeg(args...)
