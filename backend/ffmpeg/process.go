@@ -32,6 +32,7 @@ type segmentManifestEntry struct {
 	Repeat                 int
 	RotationSteps          int
 	AlternateRepeatReverse bool
+	Watermark              *models.Watermark
 }
 
 func writeSegmentManifest(path string, entries []segmentManifestEntry) error {
@@ -44,6 +45,7 @@ func writeSegmentManifest(path string, entries []segmentManifestEntry) error {
 			Repeat:                 e.Repeat,
 			RotationSteps:          e.RotationSteps,
 			AlternateRepeatReverse: e.AlternateRepeatReverse,
+			Watermark:              e.Watermark,
 		}
 	}
 	return WriteTimelineFile(path, "", fileEntries)

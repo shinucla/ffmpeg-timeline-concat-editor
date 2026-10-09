@@ -20,6 +20,7 @@ type ExportSegment struct {
 	End           float64
 	RotationSteps int
 	Reverse       bool
+	Watermark     *models.Watermark
 }
 
 func formatFFmpegSeekTime(seconds float64) string {
@@ -74,6 +75,7 @@ func buildExportSegments(videoRoot string, req models.ProcessRequest) ([]ExportS
 				Repeat:                 seg.Repeat,
 				RotationSteps:          seg.RotationSteps,
 				AlternateRepeatReverse: seg.AlternateRepeatReverse,
+				Watermark:              seg.Watermark,
 			})
 			for i := 0; i < segmentRepeatCount(seg); i++ {
 				reverse := seg.AlternateRepeatReverse && (i+1)%2 == 0
@@ -83,6 +85,7 @@ func buildExportSegments(videoRoot string, req models.ProcessRequest) ([]ExportS
 					End:           seg.End,
 					RotationSteps: seg.RotationSteps,
 					Reverse:       reverse,
+					Watermark:     seg.Watermark,
 				})
 			}
 		}
@@ -119,6 +122,7 @@ func buildCutPartSegments(videoRoot string, req models.ProcessRequest) ([]Export
 				Start:         seg.Start,
 				End:           seg.End,
 				RotationSteps: seg.RotationSteps,
+				Watermark:     seg.Watermark,
 			})
 		}
 	}
@@ -299,13 +303,21 @@ func appendSeekInputs(args []string, segments []ExportSegment) []string {
 func buildSingleVideoFilter(seg ExportSegment, normalize exportNormalize) string {
 	rotation := rotationVideoFilter(seg.RotationSteps)
 	reverse := reverseVideoFilter(seg.Reverse)
+	outW, outH := normalize.CanvasW, normalize.CanvasH
+	if !normalize.Apply {
+		if width, height, err := segmentEffectiveSize(seg); err == nil {
+			outW, outH = width, height
+		}
+	}
 	if normalize.Apply {
-		return rotation + reverse + buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH)
+		filter := rotation + reverse + buildSingleScaleVideoFilter(normalize.CanvasW, normalize.CanvasH)
+		return appendWatermarkFilter(filter, seg.Watermark, outW, outH)
 	}
-	if rotation == "" && reverse == "" {
-		return "setpts=PTS-STARTPTS"
+	base := "setpts=PTS-STARTPTS"
+	if rotation != "" || reverse != "" {
+		base = rotation + reverse + base
 	}
-	return rotation + reverse + "setpts=PTS-STARTPTS"
+	return appendWatermarkFilter(base, seg.Watermark, outW, outH)
 }
 
 func buildExportPTSResetFilter(segments []ExportSegment) string {
@@ -313,7 +325,11 @@ func buildExportPTSResetFilter(segments []ExportSegment) string {
 	for i, seg := range segments {
 		rotation := rotationVideoFilter(seg.RotationSteps)
 		reverse := reverseVideoFilter(seg.Reverse)
-		filters.WriteString(fmt.Sprintf("[%d:v]%s%ssetpts=PTS-STARTPTS[v%d];", i, rotation, reverse, i))
+		chain := rotation + reverse + "setpts=PTS-STARTPTS"
+		if outW, outH, err := segmentEffectiveSize(seg); err == nil {
+			chain = appendWatermarkFilter(chain, seg.Watermark, outW, outH)
+		}
+		filters.WriteString(fmt.Sprintf("[%d:v]%s[v%d];", i, chain, i))
 		filters.WriteString(fmt.Sprintf("[%d:a]%s[a%d];", i, segmentAudioFilter(seg, false), i))
 	}
 	var concatInputs strings.Builder
@@ -329,10 +345,12 @@ func buildExportScaleFilter(segments []ExportSegment, canvasW, canvasH int) stri
 	for i, seg := range segments {
 		rotation := rotationVideoFilter(seg.RotationSteps)
 		reverse := reverseVideoFilter(seg.Reverse)
-		filters.WriteString(fmt.Sprintf(
-			"[%d:v]%s%sscale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v%d];",
-			i, rotation, reverse, canvasW, canvasH, canvasW, canvasH, i,
-		))
+		chain := fmt.Sprintf(
+			"%s%sscale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS",
+			rotation, reverse, canvasW, canvasH, canvasW, canvasH,
+		)
+		chain = appendWatermarkFilter(chain, seg.Watermark, canvasW, canvasH)
+		filters.WriteString(fmt.Sprintf("[%d:v]%s[v%d];", i, chain, i))
 		filters.WriteString(fmt.Sprintf("[%d:a]%s[a%d];", i, segmentAudioFilter(seg, true), i))
 	}
 	var concatInputs strings.Builder

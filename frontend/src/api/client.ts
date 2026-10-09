@@ -16,6 +16,7 @@ function segmentsToExportClips(segments: TimelineSegment[]) {
         repeat: seg.repeat,
         rotationSteps: seg.rotationSteps,
         alternateRepeatReverse: seg.alternateRepeatReverse,
+        watermark: seg.watermark?.enabled ? seg.watermark : undefined,
       }],
     }))
 }
@@ -125,6 +126,7 @@ export async function saveTimeline(
           repeat: seg.repeat,
           rotationSteps: seg.rotationSteps,
           alternateRepeatReverse: seg.alternateRepeatReverse,
+          watermark: seg.watermark?.enabled ? seg.watermark : undefined,
         })),
     }),
   })

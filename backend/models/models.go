@@ -12,12 +12,27 @@ type VideoSummary struct {
 	FPS        float64 `json:"fps"`
 }
 
+// Watermark is a burned-in text overlay on a segment.
+// Position/size are fractions (0..1) of the output frame; Start/Duration are
+// seconds relative to the start of the owning segment.
+type Watermark struct {
+	Enabled  bool    `json:"enabled"`
+	Text     string  `json:"text"`
+	Start    float64 `json:"start"`
+	Duration float64 `json:"duration"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	Width    float64 `json:"width"`
+	Height   float64 `json:"height"`
+}
+
 type Segment struct {
-	Start                  float64 `json:"start"`
-	End                    float64 `json:"end"`
-	Repeat                 int     `json:"repeat,omitempty"`
-	RotationSteps          int     `json:"rotationSteps,omitempty"`
-	AlternateRepeatReverse bool    `json:"alternateRepeatReverse,omitempty"`
+	Start                  float64    `json:"start"`
+	End                    float64    `json:"end"`
+	Repeat                 int        `json:"repeat,omitempty"`
+	RotationSteps          int        `json:"rotationSteps,omitempty"`
+	AlternateRepeatReverse bool       `json:"alternateRepeatReverse,omitempty"`
+	Watermark              *Watermark `json:"watermark,omitempty"`
 }
 
 type Clip struct {

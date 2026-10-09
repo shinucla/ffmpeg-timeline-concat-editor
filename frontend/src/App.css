@@ -722,6 +722,7 @@
 }
 
 .preview-video-wrap {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
@@ -1006,6 +1007,151 @@
 
 .segment-body:active {
   cursor: grabbing;
+}
+
+.segment-watermark {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  min-width: 6px;
+  z-index: 5;
+  background: rgba(255, 193, 120, 0.28);
+  border: 1px dashed #ffc178;
+  border-radius: 3px;
+  cursor: grab;
+  box-sizing: border-box;
+}
+
+.segment-watermark:active {
+  cursor: grabbing;
+}
+
+.segment-watermark-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #ffe6c2;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.segment-watermark-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 6;
+}
+
+.segment-watermark-handle-left {
+  left: -3px;
+}
+
+.segment-watermark-handle-right {
+  right: -3px;
+}
+
+.preview-watermark-layer {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.preview-watermark-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 2px dashed rgba(255, 193, 120, 0.95);
+  background: rgba(255, 193, 120, 0.14);
+  cursor: move;
+  pointer-events: auto;
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+.preview-watermark-text {
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+  padding: 0 4px;
+}
+
+.preview-watermark-resize {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ffc178;
+  border-radius: 50%;
+  background: #1e2430;
+  cursor: nwse-resize;
+  pointer-events: auto;
+}
+
+.segments-watermark-row td {
+  padding: 0.4rem 0.75rem 0.6rem 2.25rem;
+  background: #141a26;
+}
+
+.segments-watermark-row.selected td {
+  box-shadow: inset 3px 0 0 #5b8def;
+}
+
+.segments-watermark-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.segments-watermark-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  color: #9aa3b2;
+}
+
+.segments-watermark-field input {
+  width: 7rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid #2a3142;
+  border-radius: 4px;
+  background: #12161f;
+  color: #e8eaed;
+  font-size: 0.85rem;
+}
+
+.segments-watermark-field-text {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.segments-watermark-field-text input {
+  width: 100%;
+}
+
+.segments-watermark-field input:focus {
+  outline: none;
+  border-color: #5b8def;
 }
 
 .segments-table {

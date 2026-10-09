@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/shin/web-load-time-cut-concat/backend/models"
 )
 
 const TimelineCacheHeaderPrefix = "# cache:"
+const TimelineWatermarkHeaderPrefix = "# wm"
 
 type TimelineFileEntry struct {
 	Start                  float64
@@ -16,6 +20,7 @@ type TimelineFileEntry struct {
 	Repeat                 int
 	RotationSteps          int
 	AlternateRepeatReverse bool
+	Watermark              *models.Watermark
 }
 
 type ParsedTimeline struct {
@@ -41,6 +46,12 @@ func ParseTimelineText(text string) (ParsedTimeline, error) {
 		if strings.HasPrefix(line, "#") {
 			if cacheFolder, ok := parseTimelineCacheHeader(line); ok {
 				result.CacheFolder = cacheFolder
+				continue
+			}
+			if len(result.Entries) > 0 {
+				if wm, ok := parseTimelineWatermarkHeader(line); ok {
+					result.Entries[len(result.Entries)-1].Watermark = wm
+				}
 			}
 			continue
 		}
@@ -69,6 +80,35 @@ func parseTimelineCacheHeader(line string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// parseTimelineWatermarkHeader parses a "# wm x y w h start duration text..."
+// comment line. Position/size are fractions, times are seconds relative to the
+// owning segment.
+func parseTimelineWatermarkHeader(line string) (*models.Watermark, bool) {
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "#"))
+	fields := strings.Fields(rest)
+	if len(fields) < 7 || !strings.EqualFold(fields[0], "wm") {
+		return nil, false
+	}
+	values := make([]float64, 6)
+	for i := 0; i < 6; i++ {
+		v, err := strconv.ParseFloat(fields[i+1], 64)
+		if err != nil {
+			return nil, false
+		}
+		values[i] = v
+	}
+	return &models.Watermark{
+		Enabled:  true,
+		Text:     strings.Join(fields[7:], " "),
+		X:        values[0],
+		Y:        values[1],
+		Width:    values[2],
+		Height:   values[3],
+		Start:    values[4],
+		Duration: values[5],
+	}, true
 }
 
 func parseTimelineSegmentLine(line string, lineNumber int) (TimelineFileEntry, error) {
@@ -235,6 +275,24 @@ func formatTimelineTime(seconds float64) string {
 	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
 }
 
+func formatTimelineNumber(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func formatTimelineWatermark(wm *models.Watermark) string {
+	return fmt.Sprintf(
+		"%s %s %s %s %s %s %s %s",
+		TimelineWatermarkHeaderPrefix,
+		formatTimelineNumber(wm.X),
+		formatTimelineNumber(wm.Y),
+		formatTimelineNumber(wm.Width),
+		formatTimelineNumber(wm.Height),
+		formatTimelineNumber(wm.Start),
+		formatTimelineNumber(wm.Duration),
+		wm.Text,
+	)
+}
+
 func WriteTimelineFile(path, cacheFolder string, entries []TimelineFileEntry) error {
 	var lines []string
 	if cacheFolder != "" {
@@ -259,6 +317,9 @@ func WriteTimelineFile(path, cacheFolder string, entries []TimelineFileEntry) er
 			rotation,
 			alternate,
 		))
+		if e.Watermark != nil && e.Watermark.Enabled {
+			lines = append(lines, formatTimelineWatermark(e.Watermark))
+		}
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }

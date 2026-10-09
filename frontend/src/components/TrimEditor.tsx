@@ -10,6 +10,7 @@ import {
 import { useLibraryStore } from '../store/libraryStore'
 import { usePlayerStore } from '../store/playerStore'
 import { useProjectStore } from '../store/projectStore'
+import { MIN_WATERMARK_DURATION } from '../utils/watermark'
 import type { TimelineSegment, VideoSummary } from '../types'
 
 function clamp(value: number, min: number, max: number) {
@@ -47,7 +48,24 @@ function nextSegmentStartWhenOutside(segs: TimelineSegment[], time: number) {
 
 const TIMELINE_ZOOM_LEVELS = [1, 2, 4, 8, 16, 32, 64] as const
 
-type DragMode = 'resize-start' | 'resize-end' | 'move' | 'playhead' | null
+type DragMode =
+  | 'resize-start'
+  | 'resize-end'
+  | 'move'
+  | 'playhead'
+  | 'wm-move'
+  | 'wm-resize-start'
+  | 'wm-resize-end'
+  | null
+
+type PreviewDragMode = 'move' | 'resize' | null
+
+interface PreviewRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
 const SEGMENT_REPEAT_HEADROOM = 32
 const SEGMENT_BAR_TOP = 8 + SEGMENT_REPEAT_HEADROOM
@@ -141,6 +159,7 @@ export function TrimEditor() {
   const setSegmentRepeat = useProjectStore((s) => s.setSegmentRepeat)
   const setSegmentRotationSteps = useProjectStore((s) => s.setSegmentRotationSteps)
   const setSegmentAlternateRepeatReverse = useProjectStore((s) => s.setSegmentAlternateRepeatReverse)
+  const updateSegmentWatermark = useProjectStore((s) => s.updateSegmentWatermark)
   const removeSegment = useProjectStore((s) => s.removeSegment)
   const videoRoot = useLibraryStore((s) => s.folderInput)
   const applyPlayerSettings = usePlayerStore((s) => s.applyTo)
@@ -175,13 +194,28 @@ export function TrimEditor() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const trackRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  const previewWrapRef = useRef<HTMLDivElement>(null)
+  const previewLayerRef = useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [timelineZoomIndex, setTimelineZoomIndex] = useState(0)
+  const [previewRect, setPreviewRect] = useState<PreviewRect>({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  })
   const dragRef = useRef<{
     mode: DragMode
     segmentId: string
     startX: number
     origin: { start: number; end: number }
+  } | null>(null)
+  const previewDragRef = useRef<{
+    mode: PreviewDragMode
+    segmentId: string
+    startX: number
+    startY: number
+    origin: { x: number; y: number; width: number; height: number }
   } | null>(null)
   const scrubbingRef = useRef(false)
   const prevPlaybackTimeRef = useRef(0)
@@ -203,6 +237,97 @@ export function TrimEditor() {
   }, [videoSegmentsByOrder, activeSegmentId, currentTime, segments])
 
   const previewRotationDeg = rotationStepsToDegrees(previewSegment?.rotationSteps ?? 0)
+
+  // The watermark overlay is tied to the segment currently under the playhead
+  // and only visible while the playhead is inside its relative time window.
+  const previewWatermark = useMemo(() => {
+    const seg = previewSegment
+    if (!seg || !seg.watermark?.enabled) return null
+    const relativeTime = currentTime - seg.start
+    const { start, duration } = seg.watermark
+    if (relativeTime < start || relativeTime >= start + duration) return null
+    return seg
+  }, [previewSegment, currentTime])
+
+  function syncPreviewRect() {
+    const wrap = previewWrapRef.current
+    const vid = videoRef.current
+    if (!wrap || !vid) return
+    const wr = wrap.getBoundingClientRect()
+    const vr = vid.getBoundingClientRect()
+    if (vr.width <= 0 || vr.height <= 0) return
+    setPreviewRect({
+      left: vr.left - wr.left,
+      top: vr.top - wr.top,
+      width: vr.width,
+      height: vr.height,
+    })
+  }
+
+  useEffect(() => {
+    syncPreviewRect()
+    const wrap = previewWrapRef.current
+    const vid = videoRef.current
+    const observer = new ResizeObserver(() => syncPreviewRect())
+    if (wrap) observer.observe(wrap)
+    if (vid) observer.observe(vid)
+    window.addEventListener('resize', syncPreviewRect)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', syncPreviewRect)
+    }
+  }, [video?.id, previewRotationDeg, previewWatermark?.id])
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      const drag = previewDragRef.current
+      const layer = previewLayerRef.current
+      if (!drag || !layer) return
+      const rect = layer.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const dx = (e.clientX - drag.startX) / rect.width
+      const dy = (e.clientY - drag.startY) / rect.height
+      if (drag.mode === 'move') {
+        updateSegmentWatermark(drag.segmentId, {
+          x: drag.origin.x + dx,
+          y: drag.origin.y + dy,
+        })
+      } else if (drag.mode === 'resize') {
+        updateSegmentWatermark(drag.segmentId, {
+          width: drag.origin.width + dx,
+          height: drag.origin.height + dy,
+        })
+      }
+    }
+    function onMouseUp() {
+      previewDragRef.current = null
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [updateSegmentWatermark])
+
+  function beginPreviewWatermarkDrag(e: React.MouseEvent, mode: PreviewDragMode) {
+    const seg = previewWatermark
+    if (!seg || !seg.watermark.enabled) return
+    e.preventDefault()
+    e.stopPropagation()
+    previewDragRef.current = {
+      mode,
+      segmentId: seg.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      origin: {
+        x: seg.watermark.x,
+        y: seg.watermark.y,
+        width: seg.watermark.width,
+        height: seg.watermark.height,
+      },
+    }
+  }
 
   const duration = video?.duration ?? 0
   const fps = video?.fps ?? 30
@@ -298,6 +423,18 @@ export function TrimEditor() {
     }
   }
 
+  function handleWatermarkEnabledChange(segmentId: string, enabled: boolean) {
+    updateSegmentWatermark(segmentId, { enabled })
+    if (!enabled) return
+    const seg = useProjectStore.getState().segments.find((s) => s.id === segmentId)
+    if (!seg) return
+    selectSegment(segmentId)
+    if (seg.videoId === selectedVideoId) {
+      resetSegmentRepeatProgress()
+      seekToTime(seg.start, false, seg.id)
+    }
+  }
+
   function seekFromClientX(clientX: number) {
     const track = trackRef.current
     if (!track || duration <= 0) return
@@ -324,6 +461,36 @@ export function TrimEditor() {
       const playhead = quantizeToFrame(currentTimeRef.current, fps)
 
       if (!drag.mode) return
+
+      if (
+        drag.mode === 'wm-move' ||
+        drag.mode === 'wm-resize-start' ||
+        drag.mode === 'wm-resize-end'
+      ) {
+        const seg = useProjectStore
+          .getState()
+          .segments.find((entry) => entry.id === drag.segmentId)
+        if (!seg || !seg.watermark.enabled) return
+        const segDuration = Math.max(0, seg.end - seg.start)
+        const wmDuration = drag.origin.end - drag.origin.start
+        const minWm = Math.min(MIN_WATERMARK_DURATION, segDuration)
+
+        if (drag.mode === 'wm-move') {
+          const maxStart = Math.max(0, segDuration - wmDuration)
+          const nextStart = clamp(drag.origin.start + delta, 0, maxStart)
+          updateSegmentWatermark(drag.segmentId, { start: nextStart })
+        } else if (drag.mode === 'wm-resize-start') {
+          const nextStart = clamp(drag.origin.start + delta, 0, drag.origin.end - minWm)
+          updateSegmentWatermark(drag.segmentId, {
+            start: nextStart,
+            duration: drag.origin.end - nextStart,
+          })
+        } else {
+          const nextEnd = clamp(drag.origin.end + delta, drag.origin.start + minWm, segDuration)
+          updateSegmentWatermark(drag.segmentId, { duration: nextEnd - drag.origin.start })
+        }
+        return
+      }
 
       const fileSegs = useProjectStore
         .getState()
@@ -359,7 +526,7 @@ export function TrimEditor() {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [video, duration, minDuration, fps, updateSegment])
+  }, [video, duration, minDuration, fps, updateSegment, updateSegmentWatermark])
 
   const segmentLinkMarkerId = `segment-link-arrow-${useId().replace(/:/g, '')}`
 
@@ -403,6 +570,8 @@ export function TrimEditor() {
             onRepeatChange={setSegmentRepeat}
             onRotationChange={setSegmentRotationSteps}
             onAlternateRepeatReverseChange={setSegmentAlternateRepeatReverse}
+            onWatermarkEnabledChange={handleWatermarkEnabledChange}
+            onWatermarkChange={updateSegmentWatermark}
             emptyMessage="No segments yet."
           />
         )}
@@ -424,6 +593,16 @@ export function TrimEditor() {
     const bar = target.closest('.segment-bar') as HTMLElement | null
     const segmentId = bar?.dataset.segmentId ?? ''
 
+    if (target.closest('.segment-watermark') && segmentId) {
+      const mode = target.closest('.segment-watermark-handle-left')
+        ? 'wm-resize-start'
+        : target.closest('.segment-watermark-handle-right')
+          ? 'wm-resize-end'
+          : 'wm-move'
+      selectSegment(segmentId)
+      beginWatermarkDrag(e, segmentId, mode)
+      return
+    }
     if (target.closest('.segment-handle-left') && segmentId) {
       selectSegment(segmentId)
       beginDrag(e, segmentId, 'resize-start')
@@ -485,6 +664,26 @@ export function TrimEditor() {
       segmentId,
       startX: e.clientX,
       origin: { start: seg.start, end: seg.end },
+    }
+  }
+
+  function beginWatermarkDrag(
+    e: React.MouseEvent,
+    segmentId: string,
+    mode: 'wm-move' | 'wm-resize-start' | 'wm-resize-end',
+  ) {
+    e.preventDefault()
+    e.stopPropagation()
+    const seg = segments.find((s) => s.id === segmentId)
+    if (!seg || !seg.watermark.enabled) return
+    dragRef.current = {
+      mode,
+      segmentId,
+      startX: e.clientX,
+      origin: {
+        start: seg.watermark.start,
+        end: seg.watermark.start + seg.watermark.duration,
+      },
     }
   }
 
@@ -639,20 +838,59 @@ export function TrimEditor() {
         </div>
       </header>
 
-      <div className="preview-video-wrap">
+      <div className="preview-video-wrap" ref={previewWrapRef}>
         <video
           ref={videoRef}
           className="preview-video"
           style={{ transform: `rotate(${previewRotationDeg}deg)` }}
           src={streamUrl(activeVideo.id)}
           controls
-          onLoadedMetadata={(e) => applyPlayerSettings(e.currentTarget)}
+          onLoadedMetadata={(e) => {
+            applyPlayerSettings(e.currentTarget)
+            requestAnimationFrame(syncPreviewRect)
+          }}
           onVolumeChange={(e) => syncPlayerSettings(e.currentTarget)}
           onRateChange={(e) => syncPlayerSettings(e.currentTarget)}
           onPlay={handleVideoPlay}
           onTimeUpdate={(e) => handleVideoTimeUpdate(e.currentTarget.currentTime)}
           onSeeked={(e) => handleVideoSeeked(e.currentTarget.currentTime)}
         />
+        {previewWatermark && previewRect.width > 0 && (
+          <div
+            className="preview-watermark-layer"
+            ref={previewLayerRef}
+            style={{
+              left: previewRect.left,
+              top: previewRect.top,
+              width: previewRect.width,
+              height: previewRect.height,
+            }}
+          >
+            <div
+              className="preview-watermark-box"
+              style={{
+                left: `${previewWatermark.watermark.x * 100}%`,
+                top: `${previewWatermark.watermark.y * 100}%`,
+                width: `${previewWatermark.watermark.width * 100}%`,
+                height: `${previewWatermark.watermark.height * 100}%`,
+                fontSize: `${Math.max(
+                  9,
+                  previewRect.height * previewWatermark.watermark.height * 0.6,
+                )}px`,
+              }}
+              onMouseDown={(e) => beginPreviewWatermarkDrag(e, 'move')}
+            >
+              <span className="preview-watermark-text">
+                {previewWatermark.watermark.text || 'Watermark'}
+              </span>
+              <div
+                className="preview-watermark-resize"
+                aria-label="Resize watermark"
+                onMouseDown={(e) => beginPreviewWatermarkDrag(e, 'resize')}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div
@@ -783,6 +1021,23 @@ export function TrimEditor() {
               <div className="segment-handle segment-handle-left" />
               <div className="segment-body" />
               <div className="segment-handle segment-handle-right" />
+              {seg.watermark?.enabled && segDuration > 0 && (
+                <div
+                  className="segment-watermark"
+                  data-segment-id={seg.id}
+                  style={{
+                    left: `${clamp(seg.watermark.start / segDuration, 0, 1) * 100}%`,
+                    width: `${clamp(seg.watermark.duration / segDuration, 0, 1) * 100}%`,
+                  }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                >
+                  <div className="segment-watermark-handle segment-watermark-handle-left" />
+                  <span className="segment-watermark-label">
+                    {seg.watermark.text || 'WM'}
+                  </span>
+                  <div className="segment-watermark-handle segment-watermark-handle-right" />
+                </div>
+              )}
             </div>
           )
         })}
@@ -846,6 +1101,8 @@ export function TrimEditor() {
         onRepeatChange={setSegmentRepeat}
         onRotationChange={setSegmentRotationSteps}
         onAlternateRepeatReverseChange={setSegmentAlternateRepeatReverse}
+        onWatermarkEnabledChange={handleWatermarkEnabledChange}
+        onWatermarkChange={updateSegmentWatermark}
       />
     </section>
   )

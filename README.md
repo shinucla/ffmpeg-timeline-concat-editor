@@ -49,7 +49,12 @@ The chosen video folder is also saved to `.local/settings.json` and restored on 
 1. **Library** — lists MP4s from `VIDEO_ROOT`
 2. **Project** — add clips, drag to reorder
 3. **Trim editor** — set in/out points, frame-step handles, multiple segments per clip
-4. **Export** — FFmpeg cuts each segment, then concatenates into one file in `OUTPUT_DIR`
+4. **Watermarks** — tick **WMark** on a segment row to add a text watermark. Set its
+   relative start/duration and text, drag the placeholder on the preview to position
+   it and the corner handle to resize, or drag the rectangle inside the timeline
+   segment bar to retime it.
+5. **Export** — FFmpeg cuts each segment, burns in any watermarks (position, size,
+   text and timing), then concatenates into one file in `OUTPUT_DIR`
 
 ## API
 

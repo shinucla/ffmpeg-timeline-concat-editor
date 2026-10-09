@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { TimelineSegment, VideoSummary } from '../types'
+import type { TimelineSegment, VideoSummary, Watermark } from '../types'
+import { createDefaultWatermark, normalizeWatermark } from '../utils/watermark'
 import {
   insertSegmentByLibraryOrder,
   moveSegmentInTimelineOrder,
@@ -25,6 +26,7 @@ interface ProjectState {
   setSegmentRepeat: (segmentId: string, repeat: number) => void
   setSegmentRotationSteps: (segmentId: string, rotationSteps: number) => void
   setSegmentAlternateRepeatReverse: (segmentId: string, alternateRepeatReverse: boolean) => void
+  updateSegmentWatermark: (segmentId: string, patch: Partial<Watermark>) => void
   reorderSegments: (activeId: string, overId: string) => void
   removeSegment: (segmentId: string) => void
   setOutputName: (name: string) => void
@@ -88,6 +90,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       repeat: 1,
       rotationSteps: 0,
       alternateRepeatReverse: false,
+      watermark: createDefaultWatermark(end - start),
     }
     set((state) => ({
       segments: insertSegmentByLibraryOrder(
@@ -109,7 +112,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
       return {
         segments: state.segments.map((seg) =>
-          seg.id === segmentId ? { ...seg, start, end } : seg,
+          seg.id === segmentId
+            ? { ...seg, start, end, watermark: normalizeWatermark(seg.watermark, end - start) }
+            : seg,
         ),
       }
     }),
@@ -146,6 +151,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       segments: state.segments.map((seg) =>
         seg.id === segmentId ? { ...seg, alternateRepeatReverse } : seg,
       ),
+    })),
+
+  updateSegmentWatermark: (segmentId, patch) =>
+    set((state) => ({
+      segments: state.segments.map((seg) => {
+        if (seg.id !== segmentId) return seg
+        const merged = { ...seg.watermark, ...patch }
+        return { ...seg, watermark: normalizeWatermark(merged, seg.end - seg.start) }
+      }),
     })),
 
   reorderSegments: (activeId, overId) =>
@@ -197,6 +211,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         repeat: entry.repeat,
         rotationSteps: entry.rotationSteps,
         alternateRepeatReverse: entry.alternateRepeatReverse,
+        watermark: entry.watermark
+          ? normalizeWatermark(entry.watermark, entry.end - entry.start)
+          : createDefaultWatermark(entry.end - entry.start),
       })
     }
 

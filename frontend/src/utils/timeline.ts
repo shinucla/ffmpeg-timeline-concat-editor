@@ -1,4 +1,4 @@
-import type { Segment, VideoSummary } from '../types'
+import type { Segment, VideoSummary, Watermark } from '../types'
 
 export interface TimelineEntry {
   start: number
@@ -7,6 +7,7 @@ export interface TimelineEntry {
   repeat: number
   rotationSteps: number
   alternateRepeatReverse: boolean
+  watermark: Watermark | null
 }
 
 export interface ParsedTimeline {
@@ -135,6 +136,7 @@ function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
       repeat: 1,
       rotationSteps: 0,
       alternateRepeatReverse: false,
+      watermark: null,
     }
   }
 
@@ -147,7 +149,36 @@ function parseTimelineLine(line: string, lineNumber: number): TimelineEntry {
 
   const { filename, repeat, rotationSteps, alternateRepeatReverse } =
     parseTimelineTrailingFields(parts, lineNumber)
-  return { start, end, filename, repeat, rotationSteps, alternateRepeatReverse }
+  return {
+    start,
+    end,
+    filename,
+    repeat,
+    rotationSteps,
+    alternateRepeatReverse,
+    watermark: null,
+  }
+}
+
+const WATERMARK_LINE_RE =
+  /^#\s*wm\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/i
+
+function parseWatermarkHeader(line: string): Watermark | null {
+  const match = line.match(WATERMARK_LINE_RE)
+  if (!match) return null
+  const nums = match.slice(1, 7).map(Number)
+  if (nums.some((n) => Number.isNaN(n))) return null
+  const [x, y, width, height, start, duration] = nums
+  return {
+    enabled: true,
+    text: (match[7] ?? '').trim(),
+    start,
+    duration,
+    x,
+    y,
+    width,
+    height,
+  }
 }
 
 function parseCacheHeader(line: string): string | null {
@@ -170,6 +201,12 @@ export function parseTimelineText(text: string): ParsedTimeline {
       const parsedCache = parseCacheHeader(line)
       if (parsedCache) {
         cacheFolder = parsedCache
+        continue
+      }
+      const parsedWatermark = parseWatermarkHeader(line)
+      if (parsedWatermark) {
+        const last = entries[entries.length - 1]
+        if (last) last.watermark = parsedWatermark
       }
       continue
     }
@@ -230,6 +267,20 @@ export function outputNameFromTimelineFile(filename: string): string {
   return filename.replace(/\.txt$/i, '') || 'final-output'
 }
 
+export function formatWatermarkHeader(watermark: Watermark): string {
+  const num = (value: number) => (Math.round(value * 1000) / 1000).toString()
+  return [
+    '# wm',
+    num(watermark.x),
+    num(watermark.y),
+    num(watermark.width),
+    num(watermark.height),
+    num(watermark.start),
+    num(watermark.duration),
+    watermark.text,
+  ].join(' ')
+}
+
 export function serializeTimelineText(
   segments: Array<{
     start: number
@@ -238,6 +289,7 @@ export function serializeTimelineText(
     repeat: number
     rotationSteps: number
     alternateRepeatReverse: boolean
+    watermark?: Watermark | null
     order: number
   }>,
   cacheFolder?: string | null,
@@ -252,6 +304,9 @@ export function serializeTimelineText(
     lines.push(
       `${formatTimelineTime(seg.start)} ${formatTimelineTime(seg.end)} ${seg.filename} ${seg.repeat} ${normalizeRotationSteps(seg.rotationSteps)} ${alternate}`,
     )
+    if (seg.watermark?.enabled) {
+      lines.push(formatWatermarkHeader(seg.watermark))
+    }
   }
   return `${lines.join('\n')}\n`
 }

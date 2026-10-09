@@ -334,12 +334,13 @@ func (h *Handler) SaveTimeline(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		CacheFolder string `json:"cacheFolder"`
 		Segments    []struct {
-			Start                  float64 `json:"start"`
-			End                    float64 `json:"end"`
-			Filename               string  `json:"filename"`
-			Repeat                 int     `json:"repeat"`
-			RotationSteps          int     `json:"rotationSteps"`
-			AlternateRepeatReverse bool    `json:"alternateRepeatReverse"`
+			Start                  float64           `json:"start"`
+			End                    float64           `json:"end"`
+			Filename               string            `json:"filename"`
+			Repeat                 int               `json:"repeat"`
+			RotationSteps          int               `json:"rotationSteps"`
+			AlternateRepeatReverse bool              `json:"alternateRepeatReverse"`
+			Watermark              *models.Watermark `json:"watermark"`
 		} `json:"segments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -378,6 +379,7 @@ func (h *Handler) SaveTimeline(w http.ResponseWriter, r *http.Request) {
 			Repeat:                 seg.Repeat,
 			RotationSteps:          seg.RotationSteps,
 			AlternateRepeatReverse: seg.AlternateRepeatReverse,
+			Watermark:              seg.Watermark,
 		}
 	}
 
